@@ -1,0 +1,6 @@
+{
+  "name": "Sunstate Outlaws: Neon Tide",
+  "description": "3D open-world action-adventure sandbox set in sun-drenched Palmetto Bay with arcade driving physics, third-person combat, day/night cycle, PBPD pursuits, and missions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
