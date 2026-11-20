@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SoundEngine } from './audio';
-import { HIDDEN_MISSIONS, STORY_MISSIONS } from './missions';
+import { buildHiddenMissionPlayableDef, HIDDEN_MISSIONS, STORY_MISSIONS } from './missions';
 import {
   applyCharacterCustomization,
   CharacterRig,
@@ -16,7 +16,7 @@ import {
   setVehicleNeon,
   VehicleRig,
 } from './models';
-import { computeGpsRoute, RoadNetwork } from './roadNetwork';
+import { computeGpsRoute, getRightLanePointOnEdge, RoadNetwork } from './roadNetwork';
 import { createProceduralTextures, ProceduralTexturePack } from './textures';
 import {
   ActionBinding,
@@ -34,7 +34,9 @@ import {
   CutsceneViewState,
   DEFAULT_CONTROLS_CONFIG,
   GamepadInputCode,
+  getReputationRank,
   GpsPoint,
+  HiddenMissionDef,
   HudSnapshot,
   MinimapBlip,
   NeonColorId,
@@ -202,11 +204,15 @@ function createDefaultAccount(id: CharacterId): CharacterAccount {
   return {
     cash: p.startingCash,
     bankBalance: p.startingBank,
+    reputation: p.startingReputation,
+    savedX: p.homeSpawnX,
+    savedZ: p.homeSpawnZ,
+    savedYaw: p.homeSpawnYaw,
     customization: { ...p.defaults },
     skills: { ...p.startingSkills },
     unlockedWeapons: { fists: true, pistol: true, smg: id === 'elena' },
     ammo: { fists: 0, pistol: 84, smg: id === 'elena' ? 120 : 0 },
-    hasParachute: false,
+    hasParachute: id === 'kairo',
   };
 }
 
@@ -270,13 +276,14 @@ export class GameEngine {
   private accounts: Record<CharacterId, CharacterAccount> = {
     dante: createDefaultAccount('dante'),
     elena: createDefaultAccount('elena'),
+    kairo: createDefaultAccount('kairo'),
   };
-  private playerX = 48;
+  private playerX = CHARACTERS.dante.homeSpawnX;
   private playerY = 0.08;
-  private playerZ = 16;
+  private playerZ = CHARACTERS.dante.homeSpawnZ;
   private playerVy = 0;
   private peakFallVy = 0;
-  private playerYaw = Math.PI;
+  private playerYaw = CHARACTERS.dante.homeSpawnYaw;
   private onGround = true;
   private parachuteOpen = false;
   private walkCycle = 0;
@@ -318,7 +325,7 @@ export class GameEngine {
   private weatherPreset: WeatherPreset = 'clear';
   private targetWeatherPreset: WeatherPreset = 'clear';
   private autoWeatherCycle = true;
-  private weatherCycleTimer = 58;
+  private weatherCycleTimer = 210;
   private rainFactor = 0;
   private cloudFactor = 0.2;
   private fogFactor = 0.04;
@@ -342,13 +349,16 @@ export class GameEngine {
   private recentWorldEvents: string[] = [];
   private onOpenNpcChat?: (npc: { id: number; name: string; role: string; mood: string }) => void;
 
-  // GPS, Story Missions, Hidden Missions & Cutscenes
+  // GPS, Story Missions, Discoverable Random Missions & Cutscenes
   private gpsTarget: { x: number; z: number; label: string } | null = null;
   private gpsRoute: GpsPoint[] = [];
   private gpsDistance = 0;
   private gpsTurnHint = '';
   private completedStoryIds: string[] = [];
+  private discoveredHiddenIds: string[] = [];
   private completedHiddenIds: string[] = [];
+  private nearbyHiddenMission: HiddenMissionDef | null = null;
+  private activeHiddenId: string | null = null;
   private activeStoryDef: StoryMissionDef | null = null;
   private mission: ActiveMissionState = {
     activeId: null,
@@ -407,7 +417,7 @@ export class GameEngine {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (saved.characterId === 'dante' || saved.characterId === 'elena') {
+      if (saved.characterId === 'dante' || saved.characterId === 'elena' || saved.characterId === 'kairo') {
         this.characterId = saved.characterId;
       }
       if (saved.accounts?.dante) {
@@ -416,7 +426,17 @@ export class GameEngine {
       if (saved.accounts?.elena) {
         this.accounts.elena = { ...createDefaultAccount('elena'), ...saved.accounts.elena };
       }
+      if (saved.accounts?.kairo) {
+        this.accounts.kairo = { ...createDefaultAccount('kairo'), ...saved.accounts.kairo };
+      }
+      const activeAcc = this.accounts[this.characterId];
+      const activeProf = CHARACTERS[this.characterId];
+      this.playerX = typeof activeAcc.savedX === 'number' ? activeAcc.savedX : activeProf.homeSpawnX;
+      this.playerZ = typeof activeAcc.savedZ === 'number' ? activeAcc.savedZ : activeProf.homeSpawnZ;
+      this.playerYaw = typeof activeAcc.savedYaw === 'number' ? activeAcc.savedYaw : activeProf.homeSpawnYaw;
+
       if (Array.isArray(saved.completedStoryIds)) this.completedStoryIds = saved.completedStoryIds;
+      if (Array.isArray(saved.discoveredHiddenIds)) this.discoveredHiddenIds = saved.discoveredHiddenIds;
       if (Array.isArray(saved.completedHiddenIds)) this.completedHiddenIds = saved.completedHiddenIds;
       if (typeof saved.playerHandle === 'string' && saved.playerHandle.trim()) {
         this.playerHandle = saved.playerHandle.trim();
@@ -439,12 +459,18 @@ export class GameEngine {
 
   public saveGameState(silent = false) {
     try {
+      if (!this.currentVehicle) {
+        this.account.savedX = this.playerX;
+        this.account.savedZ = this.playerZ;
+        this.account.savedYaw = this.playerYaw;
+      }
       localStorage.setItem(
         SAVE_KEY,
         JSON.stringify({
           characterId: this.characterId,
           accounts: this.accounts,
           completedStoryIds: this.completedStoryIds,
+          discoveredHiddenIds: this.discoveredHiddenIds,
           completedHiddenIds: this.completedHiddenIds,
           playerHandle: this.playerHandle,
           friends: this.friends,
@@ -463,18 +489,23 @@ export class GameEngine {
     this.accounts = {
       dante: createDefaultAccount('dante'),
       elena: createDefaultAccount('elena'),
+      kairo: createDefaultAccount('kairo'),
     };
     this.characterId = 'dante';
     this.completedStoryIds = [];
+    this.discoveredHiddenIds = [];
     this.completedHiddenIds = [];
+    this.nearbyHiddenMission = null;
+    this.activeHiddenId = null;
     this.health = 100;
     this.armor = 50;
     this.godMode = false;
     this.wantedStars = 0;
     this.wantedEvading = false;
     this.currentVehicle = null;
-    this.playerX = 48;
-    this.playerZ = 16;
+    this.playerX = CHARACTERS.dante.homeSpawnX;
+    this.playerZ = CHARACTERS.dante.homeSpawnZ;
+    this.playerYaw = CHARACTERS.dante.homeSpawnYaw;
     this.playerY = this.world.groundHeightAt(this.playerX, this.playerZ, 2);
     this.cancelMission();
     this.clearGpsWaypoint();
@@ -759,7 +790,7 @@ export class GameEngine {
     this.createVehicle('helicopter', -1120, 1460, 0, false, 0xd97706);
     this.createVehicle('plane', 520, -1120, Math.PI / 2, false, 0xbe123c);
 
-    // Ambient AI Traffic (Cars + Taxis + Calm PBPD Patrols) riding curved spline network
+    // Ambient AI Traffic (Cars + Taxis + Calm PBPD Patrols) driving on RIGHT-HAND LANE!
     const trafficTypes: VehicleTypeId[] = [
       'veloce',
       'taxi',
@@ -771,24 +802,26 @@ export class GameEngine {
       'taxi',
     ];
     const numEdges = this.world.network.edges.length;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 22; i++) {
       const edgeIdx = (i * 2) % numEdges;
       const edge = this.world.network.edges[edgeIdx];
       if (edge.isDirt) continue;
-      const sIdx = Math.floor(edge.samples.length * 0.4);
-      const p = edge.samples[sIdx];
-      const pNext = edge.samples[Math.min(edge.samples.length - 1, sIdx + 1)];
-      const yaw = Math.atan2(pNext.x - p.x, pNext.z - p.z);
+      const isRev = i % 2 === 1;
+      const sIdx = Math.floor(edge.samples.length * (isRev ? 0.65 : 0.35));
+      const lanePos = getRightLanePointOnEdge(edge, sIdx, isRev);
+      const nextIdx = isRev ? Math.max(0, sIdx - 1) : Math.min(edge.samples.length - 1, sIdx + 1);
+      const laneNext = getRightLanePointOnEdge(edge, nextIdx, isRev);
+      const yaw = Math.atan2(laneNext.x - lanePos.x, laneNext.z - lanePos.z);
       const type = trafficTypes[i % trafficTypes.length];
       const colors = VEHICLE_SPECS[type].colors;
-      const veh = this.createVehicle(type, p.x, p.z, yaw, true, colors[i % colors.length]);
+      const veh = this.createVehicle(type, lanePos.x, lanePos.z, yaw, true, colors[i % colors.length]);
       veh.aiEdgeId = edge.id;
-      veh.aiSampleIdx = sIdx;
-      veh.aiReverse = false;
+      veh.aiSampleIdx = nextIdx;
+      veh.aiReverse = isRev;
     }
 
     // Ambient AI Pedestrians & PBPD Foot Patrols across districts (placed clear of buildings/trees!)
-    const pedProfiles = [CHARACTERS.dante, CHARACTERS.elena];
+    const pedProfiles = [CHARACTERS.dante, CHARACTERS.elena, CHARACTERS.kairo];
     for (let i = 0; i < 24; i++) {
       const rawX = -550 + ((i * 157) % 1250);
       const rawZ = -650 + ((i * 211) % 1300);
@@ -944,7 +977,8 @@ export class GameEngine {
   private upsertRemotePlayer(p: any) {
     if (!p?.id) return;
     let rp = this.remotePlayers.get(p.id);
-    const charId: CharacterId = p.characterId === 'elena' ? 'elena' : 'dante';
+    const charId: CharacterId =
+      p.characterId === 'kairo' ? 'kairo' : p.characterId === 'elena' ? 'elena' : 'dante';
     if (!rp) {
       const rig = createCharacterMesh(CHARACTERS[charId], this.textures.contactShadow);
       this.scene.add(rig.group);
@@ -1467,6 +1501,10 @@ export class GameEngine {
     if (justPressed(9)) this.onGamepadUiAction?.('settings');
     if (justPressed(12)) this.onGamepadUiAction?.('phone');
     if (justPressed(13)) this.onGamepadUiAction?.('map');
+    if (justPressed(17)) {
+      // PS4/PS5 Touchpad: toggles camera or opens map when double-used
+      this.toggleCameraMode();
+    }
     if (justPressed(15) && !this.currentVehicle) {
       // D-pad Right cycles weapon on foot (GTA V quick weapon switch)
       const order: WeaponId[] = (['fists', 'pistol', 'smg'] as WeaponId[]).filter(
@@ -1701,6 +1739,22 @@ export class GameEngine {
     this.emitHud();
   }
 
+  public buySocialOrCivicService(itemName: string, cost: number, heal: number, repDelta: number, clearWanted = false) {
+    if (this.account.cash < cost) {
+      return this.showToast(`Potrebuješ $${cost} na ${itemName}`, 'warning');
+    }
+    this.account.cash -= cost;
+    if (heal > 0) this.health = Math.min(100, this.health + heal);
+    if (repDelta !== 0) this.gainReputation(repDelta);
+    if (clearWanted) {
+      this.wantedStars = 0;
+      this.wantedEvading = false;
+    }
+    this.sound.playCashChime();
+    this.showToast(`${itemName} vybavené (-$${cost})`, 'success');
+    this.emitHud();
+  }
+
   private findNearestPlayerVehicle(maxDist: number): VehicleEntity | null {
     const px = this.currentVehicle ? this.currentVehicle.x : this.playerX;
     const pz = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
@@ -1786,15 +1840,36 @@ export class GameEngine {
     this.emitHud();
   }
 
+  private gainReputation(amount: number) {
+    this.account.reputation = Math.max(0, Math.round(this.account.reputation + amount));
+  }
+
   public setCharacter(id: CharacterId) {
     if (this.characterId === id) return;
+    // Save outgoing character position
+    this.account.savedX = this.currentVehicle ? this.currentVehicle.x : this.playerX;
+    this.account.savedZ = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
+    this.account.savedYaw = this.currentVehicle ? this.currentVehicle.yaw : this.playerYaw;
+    if (this.currentVehicle) {
+      this.currentVehicle = null;
+    }
+
     this.characterId = id;
+    const targetProf = CHARACTERS[id];
+    const targetAcc = this.accounts[id];
+    this.playerX = typeof targetAcc.savedX === 'number' ? targetAcc.savedX : targetProf.homeSpawnX;
+    this.playerZ = typeof targetAcc.savedZ === 'number' ? targetAcc.savedZ : targetProf.homeSpawnZ;
+    this.playerYaw = typeof targetAcc.savedYaw === 'number' ? targetAcc.savedYaw : targetProf.homeSpawnYaw;
+    this.playerY = this.world.groundHeightAt(this.playerX, this.playerZ, 2);
+    this.camYaw = this.playerYaw + Math.PI;
+
     if (!this.account.unlockedWeapons[this.weaponId]) {
       this.weaponId = this.account.unlockedWeapons.pistol ? 'pistol' : 'fists';
     }
     this.rebuildPlayerCharacter();
-    this.playerRig.group.visible = !this.currentVehicle;
-    this.showToast(`Aktívna postava: ${CHARACTERS[id].name}`, 'info');
+    this.playerRig.group.visible = true;
+    this.showToast(`Prepnutá postava: ${targetProf.name} · Domov: ${targetProf.homeName}`, 'info');
+    this.saveGameState(true);
     this.emitHud();
   }
 
@@ -1903,8 +1978,43 @@ export class GameEngine {
     this.emitHud();
   }
 
+  public startHiddenMission(id: string) {
+    const hm = HIDDEN_MISSIONS.find((m) => m.id === id);
+    if (!hm) return;
+    if (!this.discoveredHiddenIds.includes(hm.id)) {
+      this.discoveredHiddenIds.push(hm.id);
+    }
+    const prof = CHARACTERS[this.characterId];
+    const def = buildHiddenMissionPlayableDef(hm, {
+      x: prof.homeSpawnX,
+      z: prof.homeSpawnZ,
+      name: prof.homeName,
+    });
+    this.activeHiddenId = hm.id;
+    this.activeStoryDef = def;
+    const firstStage = def.stages[0];
+    this.mission = {
+      activeId: def.id,
+      isHidden: true,
+      title: def.title,
+      objective: firstStage.objective,
+      targetX: firstStage.targetX,
+      targetY: firstStage.targetY ?? null,
+      targetZ: firstStage.targetZ,
+      stageIndex: 0,
+      totalStages: def.stages.length,
+      timeLeft: def.timeLimitSec,
+      reward: def.reward,
+    };
+    this.recordWorldEvent(`Spustená náhodná výzva: ${hm.title}`);
+    this.setGpsWaypoint(firstStage.targetX, firstStage.targetZ, def.title);
+    this.showToast(`Náhodná výzva spustená: ${hm.title}`, 'info');
+    this.emitHud();
+  }
+
   public cancelMission() {
     this.activeStoryDef = null;
+    this.activeHiddenId = null;
     this.mission = {
       activeId: null,
       isHidden: false,
@@ -1980,8 +2090,10 @@ export class GameEngine {
       const isDealership = s.category === 'dealership';
       const isCustoms = s.category === 'customs';
       const isBank = s.category === 'bank';
-      const bw = isArmory || isDealership || isCustoms || isBank ? 36 : 30;
-      const bd = isArmory ? 44 : isDealership || isBank || isCustoms ? 34 : 30;
+      const isPrecinct = s.category === 'precinct';
+      const isClub = s.category === 'club';
+      const bw = isArmory || isDealership || isCustoms || isBank || isPrecinct ? 36 : 30;
+      const bd = isArmory ? 44 : isDealership || isBank || isCustoms || isPrecinct || isClub ? 34 : 30;
 
       const cx = s.x - Math.sin(s.yaw) * (bd * 0.5 + 1.5);
       const cz = s.z - Math.cos(s.yaw) * (bd * 0.5 + 1.5);
@@ -1992,11 +2104,11 @@ export class GameEngine {
       const lx = dx * c - dz * sinY;
       const lz = dx * sinY + dz * c;
 
-      if (Math.abs(lx) <= bw * 0.52 && Math.abs(lz) <= bd * 0.52) {
+      if (Math.abs(lx) <= bw * 0.5 && Math.abs(lz) <= bd * 0.5) {
         return { nearby: s, inside: s };
       }
       const d = Math.hypot(px - s.x, pz - s.z);
-      if (d < 6.8) return { nearby: s, inside: null };
+      if (d < 6.5) return { nearby: s, inside: null };
     }
     return { nearby: null, inside: null };
   }
@@ -2033,19 +2145,25 @@ export class GameEngine {
       }
     }
 
+    // 1B. Launch Nearby Discovered Random Mission on E / Y
+    if (!this.currentVehicle && this.nearbyHiddenMission && !this.mission.activeId) {
+      this.startHiddenMission(this.nearbyHiddenMission.id);
+      return;
+    }
+
     // 2. Exit current vehicle (supports mid-air parachute jump & solid wall check!)
     if (this.currentVehicle) {
       const veh = this.currentVehicle;
       const tryLeft = this.resolveWorldCollision(
-        veh.x - Math.cos(veh.yaw) * 2.6,
-        veh.z + Math.sin(veh.yaw) * 2.6,
-        0.55,
+        veh.x - Math.cos(veh.yaw) * 2.2,
+        veh.z + Math.sin(veh.yaw) * 2.2,
+        0.28,
         veh.y + 0.2,
       );
       const tryRight = this.resolveWorldCollision(
-        veh.x + Math.cos(veh.yaw) * 2.6,
-        veh.z - Math.sin(veh.yaw) * 2.6,
-        0.55,
+        veh.x + Math.cos(veh.yaw) * 2.2,
+        veh.z - Math.sin(veh.yaw) * 2.2,
+        0.28,
         veh.y + 0.2,
       );
       const chosen = !tryLeft.hit ? tryLeft : !tryRight.hit ? tryRight : tryLeft;
@@ -2601,13 +2719,19 @@ export class GameEngine {
   }
 
   private updateAtmosphereAndClouds(dt: number) {
-    // Smooth automatic weather transitions
+    // Smoother, longer-interval automatic weather transitions
     if (this.autoWeatherCycle && !this.startupMode) {
       this.weatherCycleTimer -= dt;
       if (this.weatherCycleTimer <= 0) {
-        this.weatherCycleTimer = 52 + Math.random() * 28;
-        const pool: WeatherPreset[] = ['clear', 'overcast', 'rain', 'storm', 'foggy', 'clear'];
-        const nextCandidates = pool.filter((p) => p !== this.targetWeatherPreset);
+        this.weatherCycleTimer = 180 + Math.random() * 140;
+        const adjacentMap: Record<WeatherPreset, WeatherPreset[]> = {
+          clear: ['overcast', 'foggy'],
+          overcast: ['clear', 'rain', 'foggy'],
+          rain: ['overcast', 'storm'],
+          storm: ['rain', 'overcast'],
+          foggy: ['clear', 'overcast'],
+        };
+        const nextCandidates = adjacentMap[this.targetWeatherPreset] ?? ['clear', 'overcast'];
         this.targetWeatherPreset = nextCandidates[Math.floor(Math.random() * nextCandidates.length)];
         this.recordWorldEvent(`Počasie sa postupne mení na ${WEATHER_LABELS_SK[this.targetWeatherPreset]}`);
       }
@@ -2621,12 +2745,12 @@ export class GameEngine {
       foggy: { rain: 0, cloud: 0.58, fog: 0.95, storm: 0, wet: 0.25 },
     };
     const tgt = targets[this.targetWeatherPreset];
-    const transitionRate = 0.22; // smooth ~10s weather crossfade
+    const transitionRate = 0.045; // gradual ~45s realistic weather crossfade
     this.rainFactor = THREE.MathUtils.damp(this.rainFactor, tgt.rain, transitionRate, dt);
     this.cloudFactor = THREE.MathUtils.damp(this.cloudFactor, tgt.cloud, transitionRate, dt);
     this.fogFactor = THREE.MathUtils.damp(this.fogFactor, tgt.fog, transitionRate, dt);
     this.stormFactor = THREE.MathUtils.damp(this.stormFactor, tgt.storm, transitionRate, dt);
-    this.wetness = THREE.MathUtils.damp(this.wetness, tgt.wet, 0.14, dt);
+    this.wetness = THREE.MathUtils.damp(this.wetness, tgt.wet, 0.035, dt);
 
     // Derive live weatherPreset label from smooth blended values
     if (this.stormFactor > 0.55) this.weatherPreset = 'storm';
@@ -2745,21 +2869,27 @@ export class GameEngine {
         this.camYaw += camDiff * Math.min(1, dt * followRate);
       }
 
-      const nextX = THREE.MathUtils.clamp(this.playerX + moveX * speed * dt, -2450, 1650);
-      const nextZ = THREE.MathUtils.clamp(this.playerZ + moveZ * speed * dt, -2100, 2100);
-      const res = this.resolveWorldCollision(nextX, nextZ, 0.52, this.playerY);
-      const vehPush = this.resolveActorVsVehicles(res.x, res.z, 0.52, this.playerY);
-      const finalRes = this.resolveWorldCollision(vehPush.x, vehPush.z, 0.52, this.playerY);
-      this.playerX = finalRes.x;
-      this.playerZ = finalRes.z;
+      // Sub-stepped tight 0.26m radius collision so player can walk flush against walls without ever clipping through
+      const totalDx = moveX * speed * dt;
+      const totalDz = moveZ * speed * dt;
+      const steps = Math.max(1, Math.min(6, Math.ceil(Math.hypot(totalDx, totalDz) / 0.22)));
+      for (let s = 0; s < steps; s++) {
+        const nextX = THREE.MathUtils.clamp(this.playerX + totalDx / steps, -2450, 1650);
+        const nextZ = THREE.MathUtils.clamp(this.playerZ + totalDz / steps, -2100, 2100);
+        const res = this.resolveWorldCollision(nextX, nextZ, 0.26, this.playerY);
+        const vehPush = this.resolveActorVsVehicles(res.x, res.z, 0.26, this.playerY);
+        const finalRes = this.resolveWorldCollision(vehPush.x, vehPush.z, 0.26, this.playerY);
+        this.playerX = finalRes.x;
+        this.playerZ = finalRes.z;
+      }
 
       this.walkCycle += dt * (sprinting ? 13 : 8);
       const swing = Math.sin(this.walkCycle) * 0.62;
       this.playerRig.leftLeg.rotation.x = swing;
       this.playerRig.rightLeg.rotation.x = -swing;
     } else {
-      const idleVehPush = this.resolveActorVsVehicles(this.playerX, this.playerZ, 0.52, this.playerY);
-      const idleWorld = this.resolveWorldCollision(idleVehPush.x, idleVehPush.z, 0.52, this.playerY);
+      const idleVehPush = this.resolveActorVsVehicles(this.playerX, this.playerZ, 0.26, this.playerY);
+      const idleWorld = this.resolveWorldCollision(idleVehPush.x, idleVehPush.z, 0.26, this.playerY);
       this.playerX = idleWorld.x;
       this.playerZ = idleWorld.z;
       this.playerRig.leftLeg.rotation.x *= 0.85;
@@ -2805,7 +2935,7 @@ export class GameEngine {
       const glideRes = this.resolveWorldCollision(
         this.playerX + Math.sin(this.playerYaw) * glideSpeed * dt,
         this.playerZ + Math.cos(this.playerYaw) * glideSpeed * dt,
-        0.55,
+        0.28,
         this.playerY,
       );
       this.playerX = glideRes.x;
@@ -3205,10 +3335,10 @@ export class GameEngine {
     const edge = this.world.network.edges[v.aiEdgeId];
     if (!edge) return;
 
-    const targetPt = edge.samples[v.aiSampleIdx];
+    const targetPt = getRightLanePointOnEdge(edge, v.aiSampleIdx, v.aiReverse);
     const dx = targetPt.x - v.x;
     const dz = targetPt.z - v.z;
-    if (Math.hypot(dx, dz) < 9.5) {
+    if (Math.hypot(dx, dz) < 7.5) {
       if (!v.aiReverse) {
         if (v.aiSampleIdx < edge.samples.length - 1) v.aiSampleIdx++;
         else {
@@ -3239,15 +3369,32 @@ export class GameEngine {
     let diff = desiredYaw - v.yaw;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    v.yaw += THREE.MathUtils.clamp(diff, -2.5 * dt, 2.5 * dt);
+    v.yaw += THREE.MathUtils.clamp(diff, -2.8 * dt, 2.8 * dt);
 
     const px = this.currentVehicle ? this.currentVehicle.x : this.playerX;
     const pz = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
     const playerDist = Math.hypot(px - v.x, pz - v.z);
-    const targetSpeed = playerDist < 12 ? 3.0 : 16.0;
+    let targetSpeed = playerDist < 12 ? 2.5 : 15.5;
 
-    v.vx = THREE.MathUtils.damp(v.vx, Math.sin(v.yaw) * targetSpeed, 4.5, dt);
-    v.vz = THREE.MathUtils.damp(v.vz, Math.cos(v.yaw) * targetSpeed, 4.5, dt);
+    // Brake smoothly if another vehicle is directly ahead in our lane
+    const fwdX = Math.sin(v.yaw);
+    const fwdZ = Math.cos(v.yaw);
+    for (const other of this.vehicles) {
+      if (other === v || Math.abs(other.y - v.y) > 2) continue;
+      const odx = other.x - v.x;
+      const odz = other.z - v.z;
+      const along = odx * fwdX + odz * fwdZ;
+      if (along > 0 && along < 15) {
+        const lateral = Math.abs(odx * fwdZ - odz * fwdX);
+        if (lateral < 2.6) {
+          targetSpeed = Math.min(targetSpeed, along < 7.5 ? 0 : 6.0);
+          break;
+        }
+      }
+    }
+
+    v.vx = THREE.MathUtils.damp(v.vx, fwdX * targetSpeed, 4.5, dt);
+    v.vz = THREE.MathUtils.damp(v.vz, fwdZ * targetSpeed, 4.5, dt);
   }
 
   private updatePoliceCarAI(v: VehicleEntity, dt: number) {
@@ -3380,15 +3527,15 @@ export class GameEngine {
       if (!isStanding) {
         const nextX = THREE.MathUtils.clamp(npc.x + Math.sin(npc.yaw) * npc.speed * moveMult * dt, -980, 820);
         const nextZ = THREE.MathUtils.clamp(npc.z + Math.cos(npc.yaw) * npc.speed * moveMult * dt, -980, 980);
-        const worldRes = this.resolveWorldCollision(nextX, nextZ, 0.46, npc.y);
-        const vehRes = this.resolveActorVsVehicles(worldRes.x, worldRes.z, 0.46, npc.y);
-        const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.46, npc.y);
+        const worldRes = this.resolveWorldCollision(nextX, nextZ, 0.26, npc.y);
+        const vehRes = this.resolveActorVsVehicles(worldRes.x, worldRes.z, 0.26, npc.y);
+        const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.26, npc.y);
         if (worldRes.hit || vehRes.hit) npc.yaw += Math.PI * 0.65;
         npc.x = finalRes.x;
         npc.z = finalRes.z;
       } else {
-        const vehRes = this.resolveActorVsVehicles(npc.x, npc.z, 0.46, npc.y);
-        const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.46, npc.y);
+        const vehRes = this.resolveActorVsVehicles(npc.x, npc.z, 0.26, npc.y);
+        const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.26, npc.y);
         npc.x = finalRes.x;
         npc.z = finalRes.z;
       }
@@ -3462,7 +3609,8 @@ export class GameEngine {
         if (this.wantedCooldown <= 0) {
           this.wantedStars = 0;
           this.wantedEvading = false;
-          this.showToast('Unikol si hliadke PBPD!', 'success');
+          this.gainReputation(25);
+          this.showToast('Unikol si hliadke PBPD! +25 Reputácia', 'success');
         }
       } else {
         this.wantedEvading = false;
@@ -3470,19 +3618,24 @@ export class GameEngine {
       }
     }
 
-    // Check 25 Hidden World Discoveries!
+    // Check Discoverable & Triggerable Random World Missions (NOT auto-completed!)
+    let foundNearbyHm: HiddenMissionDef | null = null;
     for (const hm of HIDDEN_MISSIONS) {
       if (this.completedHiddenIds.includes(hm.id)) continue;
-      if (Math.hypot(px - hm.x, pz - hm.z) < 15 && Math.abs(py - hm.y) < 12) {
-        this.completedHiddenIds.push(hm.id);
-        this.account.cash += hm.reward;
-        this.sound.playCashChime();
-        this.showToast(`Skrytá misia "${hm.title}" nájdená! +$${hm.reward}`, 'success');
-        this.saveGameState(true);
+      if (Math.hypot(px - hm.x, pz - hm.z) < 16 && Math.abs(py - hm.y) < 12) {
+        foundNearbyHm = hm;
+        if (!this.discoveredHiddenIds.includes(hm.id)) {
+          this.discoveredHiddenIds.push(hm.id);
+          this.sound.playPhoneBeep(740);
+          this.showToast(`Objavená náhodná misia: "${hm.title}" — Stlač E pre spustenie!`, 'info');
+          this.saveGameState(true);
+        }
+        break;
       }
     }
+    this.nearbyHiddenMission = foundNearbyHm;
 
-    // Check Active Story Mission Stages
+    // Check Active Story or Random Mission Stages
     if (this.mission.activeId && this.activeStoryDef) {
       this.mission.timeLeft -= dt;
       if (this.mission.timeLeft <= 0) {
@@ -3526,17 +3679,22 @@ export class GameEngine {
           this.sound.playCashChime();
           this.showToast(`Postup: ${nextS.objective}`, 'info');
         } else {
-          // Story Mission Completed!
+          // Story or Hidden Mission Completed!
           const def = this.activeStoryDef;
+          const hiddenId = this.activeHiddenId;
           const reward = def.reward;
           this.account.cash += reward;
-          if (!this.completedStoryIds.includes(def.id)) {
+          this.gainReputation(hiddenId ? 55 : 80);
+          if (hiddenId) {
+            if (!this.discoveredHiddenIds.includes(hiddenId)) this.discoveredHiddenIds.push(hiddenId);
+            if (!this.completedHiddenIds.includes(hiddenId)) this.completedHiddenIds.push(hiddenId);
+          } else if (!this.completedStoryIds.includes(def.id)) {
             this.completedStoryIds.push(def.id);
           }
           this.wantedStars = 0;
           this.wantedEvading = false;
           this.sound.playCashChime();
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN && !hiddenId) {
             this.ws.send(JSON.stringify({ type: 'mission:complete', missionId: def.id, reward }));
           }
           this.cancelMission();
@@ -3555,7 +3713,7 @@ export class GameEngine {
               },
             };
           } else {
-            this.showToast(`Misia splnená! Odmena +$${reward}`, 'success');
+            this.showToast(`Misia splnená! +$${reward} & Reputácia`, 'success');
           }
         }
       }
@@ -3573,7 +3731,7 @@ export class GameEngine {
     this.world.gpsBeacon.position.set(this.gpsTarget.x, 20, this.gpsTarget.z);
 
     this.gpsTimer += dt;
-    if (this.gpsTimer >= 0.45) {
+    if (this.gpsTimer >= 0.25) {
       this.gpsTimer = 0;
       this.recomputeGps();
       if (this.gpsDistance < 14 && !this.mission.activeId) {
@@ -3611,7 +3769,7 @@ export class GameEngine {
     let lastNx = 0;
     let lastNz = 1;
 
-    for (let pass = 0; pass < 2; pass++) {
+    for (let pass = 0; pass < 4; pass++) {
       // 1. Oriented Bounding Boxes (Buildings, walls, shelves, bridges, pillars, props)
       for (let i = 0; i < this.world.colliders.length; i++) {
         const b = this.world.colliders[i];
@@ -3688,8 +3846,8 @@ export class GameEngine {
 
   private resolveVehicleWorldCollision(v: VehicleEntity): { hit: boolean; nx: number; nz: number } {
     const spec = VEHICLE_SPECS[v.type];
-    const r = spec.width * 0.46;
-    const fwdHalf = Math.max(0.4, spec.length * 0.5 - r * 0.85);
+    const r = spec.width * 0.43;
+    const fwdHalf = Math.max(0.35, spec.length * 0.5 - r * 0.92);
     const fx = Math.sin(v.yaw);
     const fz = Math.cos(v.yaw);
     const offsets = [0, fwdHalf, -fwdHalf];
@@ -3734,8 +3892,8 @@ export class GameEngine {
       const dz = rz - v.z;
       const lx = dx * cos - dz * sin;
       const lz = dx * sin + dz * cos;
-      const hw = spec.width * 0.52;
-      const hd = spec.length * 0.52;
+      const hw = spec.width * 0.47;
+      const hd = spec.length * 0.48;
       const clampedX = THREE.MathUtils.clamp(lx, -hw, hw);
       const clampedZ = THREE.MathUtils.clamp(lz, -hd, hd);
       const px = lx - clampedX;
@@ -4263,6 +4421,9 @@ export class GameEngine {
       }
       return `Stlač E — Otvoriť ${nearbyShop.name} (${nearbyShop.shortLabel})`;
     }
+    if (!this.currentVehicle && this.nearbyHiddenMission && !this.mission.activeId) {
+      return `Náhodná misia: ${this.nearbyHiddenMission.title} ($${this.nearbyHiddenMission.reward}) · Stlač E pre spustenie`;
+    }
     if (this.currentVehicle) {
       const spec = VEHICLE_SPECS[this.currentVehicle.type];
       if (spec.hasWaterCannon) return 'E/Y Vystúpiť · Klik/RT Vodné delo · V Kamera · T Mobil';
@@ -4378,9 +4539,16 @@ export class GameEngine {
 
     const talkNpc = this.findClosestInteractableNpc();
 
+    const profile = CHARACTERS[this.characterId];
     this.onHudUpdate({
       characterId: this.characterId,
-      characterName: CHARACTERS[this.characterId].name,
+      characterName: profile.name,
+      characterRole: profile.role,
+      characterTheme: profile.uiTheme,
+      characterLifeStory: profile.lifeStory,
+      characterHomeName: profile.homeName,
+      reputation: this.account.reputation,
+      reputationRank: getReputationRank(this.account.reputation, this.characterId),
       customization: { ...this.account.customization },
       skills: { ...this.account.skills },
       health: Math.round(this.health),
@@ -4432,16 +4600,18 @@ export class GameEngine {
       promptText: this.getContextualPrompt(nearby, inside),
       nearbyShop: nearby,
       insideShop: inside,
+      nearbyHiddenMission: this.nearbyHiddenMission,
       toastText: this.toastText,
       toastType: this.toastType,
       mission: { ...this.mission },
       completedStoryIds: [...this.completedStoryIds],
+      discoveredHiddenIds: [...this.discoveredHiddenIds],
       completedHiddenIds: [...this.completedHiddenIds],
       cutscene: cutsceneView,
       playerX: px,
       playerY: py,
       playerZ: pz,
-      playerYaw: this.playerYaw,
+      playerYaw: this.currentVehicle ? this.currentVehicle.yaw : this.playerYaw,
       blips,
       gpsTarget: this.gpsTarget,
       gpsRoute: this.gpsRoute,

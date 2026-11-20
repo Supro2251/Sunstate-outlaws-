@@ -12,11 +12,16 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
+import { CharacterTheme } from '../game/types';
 
 interface SmartphoneModalProps {
   godMode: boolean;
   weatherLabel: string;
   aiBulletin: string;
+  characterName: string;
+  characterHomeName: string;
+  reputationRank: string;
+  characterTheme: CharacterTheme;
   onCallService: (service: 'police' | 'ems' | 'fire' | 'taxi') => void;
   onDialCheat: (code: string) => { ok: boolean; message: string };
   onAskAiCopilot: (
@@ -34,6 +39,10 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
   godMode,
   weatherLabel,
   aiBulletin,
+  characterName,
+  characterHomeName,
+  reputationRank,
+  characterTheme,
   onCallService,
   onDialCheat,
   onAskAiCopilot,
@@ -48,7 +57,7 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
   const [aiMessages, setAiMessages] = useState<Array<{ from: 'user' | 'ai'; text: string }>>([
     {
       from: 'ai',
-      text: `Palmetto AI online. Aktuálne počasie: ${weatherLabel}. Opýtaj sa na taktiku, misie alebo stav mesta.`,
+      text: `Palmetto AI online pre ${characterName} (${reputationRank}). Aktuálne počasie: ${weatherLabel}. Opýtaj sa na taktiku, misie alebo stav mesta.`,
     },
   ]);
   const [aiInput, setAiInput] = useState('');
@@ -59,6 +68,8 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
   const [missionTheme, setMissionTheme] = useState('');
   const [missionLoading, setMissionLoading] = useState(false);
   const [missionError, setMissionError] = useState('');
+
+  const accentHex = characterTheme.accentHex;
 
   const appendDigit = (d: string) => {
     setDigits((prev) => (prev.length < 8 ? prev + d : prev));
@@ -103,12 +114,20 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-end p-6 bg-slate-950/45">
-      <div className="w-[338px] rounded-2xl bg-slate-900 border-2 border-slate-700 shadow-2xl overflow-hidden flex flex-col">
-        {/* Phone Top Speaker & Header */}
+      <div
+        className="w-[344px] rounded-2xl bg-slate-900 border-2 shadow-2xl overflow-hidden flex flex-col"
+        style={{ borderColor: `${accentHex}70` }}
+      >
+        {/* Phone Top Speaker & Character-Themed Header */}
         <div className="px-4 py-3 bg-slate-950 border-b border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Phone className="w-4 h-4 text-cyan-400" />
-            <span className="font-display text-sm font-bold text-white">SUNSTATE MOBIL</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4" style={{ color: accentHex }} />
+              <span className="font-display text-sm font-bold text-white">SUNSTATE MOBIL</span>
+            </div>
+            <div className="text-[10px] text-slate-400">
+              {characterName} · {reputationRank} · {characterHomeName.split(' (')[0]}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -133,9 +152,10 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
           </button>
           <button
             onClick={() => setTab('ai_chat')}
+            style={tab === 'ai_chat' ? { backgroundColor: accentHex, color: '#020617' } : undefined}
             className={`py-1.5 rounded-md font-semibold flex items-center justify-center gap-1 ${
               tab === 'ai_chat'
-                ? 'bg-cyan-400 text-slate-950'
+                ? ''
                 : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
             }`}
           >
@@ -218,7 +238,7 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
               </div>
 
               <div className="px-3 py-2 rounded-lg bg-slate-950 border border-white/15 flex items-center justify-between mb-2.5">
-                <span className="font-mono-num text-lg tracking-widest text-cyan-300">
+                <span className="font-mono-num text-lg tracking-widest" style={{ color: accentHex }}>
                   {digits || '----'}
                 </span>
                 <button
@@ -358,7 +378,7 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
               </div>
               {[
                 'Tajná nočná dodávka zo Sunstate Motors na letisko',
-                'Útek pred PBPD počas silnej búrky k Marina Loft',
+                'Útek pred PBPD počas silnej búrky k Pulse Studio Loft',
                 'Letecký prieskum ponad ostrov Coral Keys a pobrežie',
               ].map((preset) => (
                 <button

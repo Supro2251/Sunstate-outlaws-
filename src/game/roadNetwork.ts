@@ -240,6 +240,112 @@ export function createRoadNetwork(): RoadNetwork {
   return { nodes, edges, adjacency };
 }
 
+export interface RoadProjection {
+  edgeId: number;
+  segIdx: number; // segment between samples[segIdx] and samples[segIdx + 1]
+  t: number; // [0..1] along segment
+  point: GpsPoint;
+  distFromFrom: number;
+  distToTo: number;
+  distSq: number;
+}
+
+export function getEdgeArcDistances(edge: RoadEdge): number[] {
+  const acc: number[] = [0];
+  for (let i = 1; i < edge.samples.length; i++) {
+    const prev = edge.samples[i - 1];
+    const cur = edge.samples[i];
+    acc.push(acc[i - 1] + Math.hypot(cur.x - prev.x, cur.z - prev.z));
+  }
+  return acc;
+}
+
+export function projectPointOntoRoad(network: RoadNetwork, x: number, z: number): RoadProjection {
+  let best: RoadProjection = {
+    edgeId: 0,
+    segIdx: 0,
+    t: 0,
+    point: { x: network.nodes[0].x, z: network.nodes[0].z },
+    distFromFrom: 0,
+    distToTo: network.edges[0]?.length ?? 0,
+    distSq: Infinity,
+  };
+
+  for (const edge of network.edges) {
+    const samples = edge.samples;
+    if (samples.length < 2) continue;
+    let cumDist = 0;
+    const segLens: number[] = [];
+    let totalSegLen = 0;
+    for (let i = 0; i < samples.length - 1; i++) {
+      const l = Math.hypot(samples[i + 1].x - samples[i].x, samples[i + 1].z - samples[i].z);
+      segLens.push(l);
+      totalSegLen += l;
+    }
+
+    for (let i = 0; i < samples.length - 1; i++) {
+      const a = samples[i];
+      const b = samples[i + 1];
+      const abx = b.x - a.x;
+      const abz = b.z - a.z;
+      const abLenSq = abx * abx + abz * abz;
+      const t =
+        abLenSq > 1e-6
+          ? Math.max(0, Math.min(1, ((x - a.x) * abx + (z - a.z) * abz) / abLenSq))
+          : 0;
+      const px = a.x + abx * t;
+      const pz = a.z + abz * t;
+      const dSq = (x - px) * (x - px) + (z - pz) * (z - pz);
+
+      const dFrom = cumDist + segLens[i] * t;
+      const dTo = Math.max(0, totalSegLen - dFrom);
+
+      if (dSq < best.distSq) {
+        best = {
+          edgeId: edge.id,
+          segIdx: i,
+          t,
+          point: { x: px, z: pz },
+          distFromFrom: dFrom,
+          distToTo: dTo,
+          distSq: dSq,
+        };
+      }
+      cumDist += segLens[i];
+    }
+  }
+
+  return best;
+}
+
+export function getRightLanePointOnEdge(
+  edge: RoadEdge,
+  sampleIdx: number,
+  reverse: boolean,
+): { x: number; z: number; yaw: number } {
+  const samples = edge.samples;
+  const maxIdx = samples.length - 1;
+  const idx = Math.max(0, Math.min(maxIdx, sampleIdx));
+  const i0 = Math.max(0, idx - 1);
+  const i1 = Math.min(maxIdx, idx + 1);
+  const p0 = reverse ? samples[i1] : samples[i0];
+  const p1 = reverse ? samples[i0] : samples[i1];
+  const dx = p1.x - p0.x;
+  const dz = p1.z - p0.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const tx = dx / len;
+  const tz = dz / len;
+  // Right-hand lane relative to travel direction T=(tx, tz) with +Y up: right = (-tz, tx)
+  const rx = -tz;
+  const rz = tx;
+  const laneOffset = edge.isDirt ? edge.width * 0.16 : edge.width * 0.24;
+  return {
+    x: samples[idx].x + rx * laneOffset,
+    z: samples[idx].z + rz * laneOffset,
+    yaw: Math.atan2(tx, tz),
+  };
+}
+
 export function findNearestRoadNode(network: RoadNetwork, x: number, z: number): number {
   let bestId = 0;
   let bestDist = Infinity;
@@ -260,11 +366,19 @@ export function computeGpsRoute(
   endX: number,
   endZ: number,
 ): { points: GpsPoint[]; distance: number; turnHint: string } {
-  const startNode = findNearestRoadNode(network, startX, startZ);
-  const endNode = findNearestRoadNode(network, endX, endZ);
+  const startProj = projectPointOntoRoad(network, startX, startZ);
+  const endProj = projectPointOntoRoad(network, endX, endZ);
+  const startEdge = network.edges[startProj.edgeId];
+  const endEdge = network.edges[endProj.edgeId];
 
+  if (!startEdge || !endEdge) {
+    return { points: [{ x: startX, z: startZ }, { x: endX, z: endZ }], distance: 0, turnHint: 'Cieľ v dosahu' };
+  }
+
+  // Multi-source Dijkstra from startEdge.from & startEdge.to
   const dist = new Map<number, number>();
   const prev = new Map<number, { node: number; edgeId: number } | null>();
+  const sourceNodeFor = new Map<number, number>();
   const unvisited = new Set<number>();
 
   network.nodes.forEach((n) => {
@@ -272,7 +386,16 @@ export function computeGpsRoute(
     prev.set(n.id, null);
     unvisited.add(n.id);
   });
-  dist.set(startNode, 0);
+
+  if (startEdge.from === startEdge.to) {
+    dist.set(startEdge.from, Math.min(startProj.distFromFrom, startProj.distToTo));
+    sourceNodeFor.set(startEdge.from, startEdge.from);
+  } else {
+    dist.set(startEdge.from, startProj.distFromFrom);
+    sourceNodeFor.set(startEdge.from, startEdge.from);
+    dist.set(startEdge.to, startProj.distToTo);
+    sourceNodeFor.set(startEdge.to, startEdge.to);
+  }
 
   while (unvisited.size > 0) {
     let curr = -1;
@@ -284,7 +407,7 @@ export function computeGpsRoute(
         curr = id;
       }
     });
-    if (curr === -1 || curr === endNode || minD === Infinity) break;
+    if (curr === -1 || minD === Infinity) break;
     unvisited.delete(curr);
 
     const neighbors = network.adjacency.get(curr) ?? [];
@@ -294,30 +417,96 @@ export function computeGpsRoute(
       if (alt < dist.get(nb.to)!) {
         dist.set(nb.to, alt);
         prev.set(nb.to, { node: curr, edgeId: nb.edgeId });
+        sourceNodeFor.set(nb.to, sourceNodeFor.get(curr) ?? curr);
       }
     }
   }
 
-  const routePoints: GpsPoint[] = [{ x: startX, z: startZ }];
-  const edgeChain: Array<{ edgeId: number; reverse: boolean }> = [];
-
-  let walker: number | null = endNode;
-  while (walker !== null) {
-    const step = prev.get(walker);
-    if (!step) break;
-    const edge = network.edges[step.edgeId];
-    edgeChain.unshift({ edgeId: step.edgeId, reverse: edge.from !== step.node });
-    walker = step.node;
-  }
-
-  for (const item of edgeChain) {
-    const edge = network.edges[item.edgeId];
-    const pts = item.reverse ? [...edge.samples].reverse() : edge.samples;
-    for (const p of pts) {
-      routePoints.push(p);
+  const pushUnique = (arr: GpsPoint[], p: GpsPoint) => {
+    const last = arr[arr.length - 1];
+    if (!last || Math.hypot(last.x - p.x, last.z - p.z) > 1.2) {
+      arr.push({ x: p.x, z: p.z });
     }
+  };
+
+  let routePoints: GpsPoint[] = [];
+
+  // Check if direct travel on the exact same road edge is strictly shorter than turning around
+  const sameEdgeDirectCost =
+    startEdge.id === endEdge.id
+      ? Math.abs(endProj.distFromFrom - startProj.distFromFrom)
+      : Infinity;
+
+  const costViaEndFrom = (dist.get(endEdge.from) ?? Infinity) + endProj.distFromFrom;
+  const costViaEndTo = (dist.get(endEdge.to) ?? Infinity) + endProj.distToTo;
+  const bestGraphCost = Math.min(costViaEndFrom, costViaEndTo);
+
+  if (Math.hypot(startX - startProj.point.x, startZ - startProj.point.z) > 4) {
+    routePoints.push({ x: startX, z: startZ });
   }
-  routePoints.push({ x: endX, z: endZ });
+  pushUnique(routePoints, startProj.point);
+
+  if (startEdge.id === endEdge.id && sameEdgeDirectCost <= bestGraphCost + 1) {
+    if (endProj.segIdx > startProj.segIdx) {
+      for (let i = startProj.segIdx + 1; i <= endProj.segIdx; i++) {
+        pushUnique(routePoints, startEdge.samples[i]);
+      }
+    } else if (endProj.segIdx < startProj.segIdx) {
+      for (let i = startProj.segIdx; i >= endProj.segIdx + 1; i--) {
+        pushUnique(routePoints, startEdge.samples[i]);
+      }
+    }
+    pushUnique(routePoints, endProj.point);
+  } else {
+    const endEntryNode = costViaEndFrom <= costViaEndTo ? endEdge.from : endEdge.to;
+    const edgeChain: Array<{ edgeId: number; reverse: boolean }> = [];
+    let walker: number | null = endEntryNode;
+    while (walker !== null) {
+      const step = prev.get(walker);
+      if (!step) break;
+      const edge = network.edges[step.edgeId];
+      edgeChain.unshift({ edgeId: step.edgeId, reverse: edge.from !== step.node });
+      walker = step.node;
+    }
+
+    const chosenStartExitNode = sourceNodeFor.get(endEntryNode) ?? startEdge.to;
+
+    // 1. Walk along startEdge from startProj to chosenStartExitNode
+    if (chosenStartExitNode === startEdge.from) {
+      for (let i = startProj.segIdx; i >= 0; i--) {
+        pushUnique(routePoints, startEdge.samples[i]);
+      }
+    } else {
+      for (let i = startProj.segIdx + 1; i < startEdge.samples.length; i++) {
+        pushUnique(routePoints, startEdge.samples[i]);
+      }
+    }
+
+    // 2. Walk along intermediate shortest-path road edges
+    for (const item of edgeChain) {
+      const edge = network.edges[item.edgeId];
+      const pts = item.reverse ? [...edge.samples].reverse() : edge.samples;
+      for (const p of pts) {
+        pushUnique(routePoints, p);
+      }
+    }
+
+    // 3. Walk along endEdge from endEntryNode to endProj
+    if (endEntryNode === endEdge.from) {
+      for (let i = 0; i <= endProj.segIdx; i++) {
+        pushUnique(routePoints, endEdge.samples[i]);
+      }
+    } else {
+      for (let i = endEdge.samples.length - 1; i >= endProj.segIdx + 1; i--) {
+        pushUnique(routePoints, endEdge.samples[i]);
+      }
+    }
+    pushUnique(routePoints, endProj.point);
+  }
+
+  if (Math.hypot(endX - endProj.point.x, endZ - endProj.point.z) > 4) {
+    pushUnique(routePoints, { x: endX, z: endZ });
+  }
 
   let totalDist = 0;
   for (let i = 1; i < routePoints.length; i++) {
@@ -327,22 +516,34 @@ export function computeGpsRoute(
     );
   }
 
-  let turnHint = 'Pokračuj po trase';
-  if (totalDist < 30) {
-    turnHint = 'Prichádzaš do cieľa';
-  } else if (routePoints.length >= 6) {
+  let turnHint = 'Pokračuj po ceste';
+  if (totalDist < 28) {
+    turnHint = 'Cieľ v dosahu';
+  } else if (routePoints.length >= 4) {
+    // Look ahead along road segments (~25m..75m ahead) for sharpest upcoming turn
+    let accDist = 0;
+    let lookIdx = 1;
+    while (lookIdx < routePoints.length - 1 && accDist < 38) {
+      accDist += Math.hypot(
+        routePoints[lookIdx].x - routePoints[lookIdx - 1].x,
+        routePoints[lookIdx].z - routePoints[lookIdx - 1].z,
+      );
+      lookIdx++;
+    }
     const p0 = routePoints[0];
-    const p1 = routePoints[Math.min(3, routePoints.length - 1)];
-    const p2 = routePoints[Math.min(7, routePoints.length - 1)];
+    const p1 = routePoints[Math.max(1, lookIdx - 1)];
+    const p2 = routePoints[Math.min(routePoints.length - 1, lookIdx + 2)];
     const a1 = Math.atan2(p1.x - p0.x, p1.z - p0.z);
     const a2 = Math.atan2(p2.x - p1.x, p2.z - p1.z);
     let diff = a2 - a1;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    if (diff > 0.45) turnHint = 'Odboč vľavo vpred';
-    else if (diff < -0.45) turnHint = 'Odboč vpravo vpred';
-    else turnHint = 'Pokračuj rovno';
+    const distRound = Math.max(10, Math.round(accDist / 5) * 5);
+    if (diff > 0.48) turnHint = `Odboč vľavo o ${distRound} m`;
+    else if (diff < -0.48) turnHint = `Odboč vpravo o ${distRound} m`;
+    else turnHint = 'Pokračuj rovno po ceste';
   }
 
   return { points: routePoints, distance: Math.round(totalDist), turnHint };
 }
+

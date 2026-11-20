@@ -439,3 +439,61 @@ export const HIDDEN_MISSIONS: HiddenMissionDef[] = [
   { id: 'h24', title: 'Priemyselná rampa', district: 'Prístav', x: -240, y: 1, z: 980, reward: 1050, description: 'Schovaný trezor za kontajnermi.' },
   { id: 'h25', title: 'Korunný klenot', district: 'Ostrovček Coral', x: 1150, y: 1, z: -220, reward: 2500, description: 'Pristál si na vzdialenom ostrovčeku v zálive!' },
 ];
+
+export function buildHiddenMissionPlayableDef(
+  hm: HiddenMissionDef,
+  homeTarget: { name: string; x: number; z: number },
+): StoryMissionDef {
+  const isAerial = hm.y > 20 || hm.id === 'h6' || hm.id === 'h25';
+  const isPursuit = ['h2', 'h5', 'h11', 'h14', 'h17', 'h24'].includes(hm.id);
+  const idxNum = Number(hm.id.replace('h', '')) || 1;
+  const fallbackTargets: Array<{ name: string; x: number; z: number }> = [
+    homeTarget,
+    { name: 'Parkovisko Midtown', x: 460, z: -160 },
+    { name: 'Priemyselný prístav', x: -60, z: 1080 },
+    { name: 'Sunset Sands Mólo', x: 920, z: 0 },
+  ];
+  const delivery = fallbackTargets[idxNum % fallbackTargets.length];
+
+  return {
+    id: hm.id,
+    index: 100 + idxNum,
+    title: `Náhodná misia: ${hm.title}`,
+    durationLabel: 'Časovaná výzva (3–5 min)',
+    difficulty: isPursuit ? 3 : 2,
+    timeLimitSec: isAerial ? 320 : 240,
+    reward: hm.reward,
+    wantedOnStart: isPursuit ? 2 : 0,
+    introLines: [],
+    outroLines: [],
+    stages: isAerial
+      ? [
+          {
+            objective: `Zabezpeč zásielku pri ${hm.title} a presuň sa na bezpečný bod (${delivery.name})`,
+            targetX: delivery.x,
+            targetZ: delivery.z,
+            radius: 26,
+            kind: 'reach',
+          },
+        ]
+      : [
+          {
+            objective: `Vyzdvihni náklad v oblasti ${hm.district}`,
+            targetX: hm.x,
+            targetZ: hm.z,
+            radius: 18,
+            kind: 'reach',
+          },
+          {
+            objective: isPursuit
+              ? `Striasť sa PBPD a doručiť náklad na ${delivery.name}`
+              : `Rýchlo doručiť náklad na ${delivery.name}`,
+            targetX: delivery.x,
+            targetZ: delivery.z,
+            radius: 24,
+            kind: isPursuit ? 'evade_wanted' : 'deliver_car',
+          },
+        ],
+  };
+}
+

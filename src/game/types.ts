@@ -10,7 +10,7 @@ export type NpcBehaviorState =
   | 'hail_taxi';
 export type QualityLevel = 'high' | 'medium' | 'performance';
 export type RadioStationId = 'pulse' | 'synthwave' | 'bassline' | 'off';
-export type CharacterId = 'dante' | 'elena';
+export type CharacterId = 'dante' | 'elena' | 'kairo';
 export type WeaponId = 'fists' | 'pistol' | 'smg';
 export type CameraMode = 'third' | 'first';
 
@@ -58,10 +58,14 @@ export type GamepadInputCode =
   | 'BTN_7' // RT / R2
   | 'BTN_8' // Select / Share
   | 'BTN_9' // Start / Options
+  | 'BTN_10' // L3 Stick Click
+  | 'BTN_11' // R3 Stick Click
   | 'BTN_12' // D-Pad Up
   | 'BTN_13' // D-Pad Down
   | 'BTN_14' // D-Pad Left
   | 'BTN_15' // D-Pad Right
+  | 'BTN_16' // PS Home Button
+  | 'BTN_17' // PS4/PS5 Touchpad Click
   | 'AXIS_LX_NEG'
   | 'AXIS_LX_POS'
   | 'AXIS_LY_NEG'
@@ -186,12 +190,16 @@ export function formatPadCodeLabel(pad: GamepadInputCode | ''): string {
     BTN_5: 'RB / R1',
     BTN_6: 'LT / L2',
     BTN_7: 'RT / R2',
-    BTN_8: 'Select / View',
-    BTN_9: 'Start / Menu',
+    BTN_8: 'Share / View',
+    BTN_9: 'Options / Start',
+    BTN_10: 'L3 (Ľavá páčka)',
+    BTN_11: 'R3 (Pravá páčka)',
     BTN_12: 'D-Pad ↑',
     BTN_13: 'D-Pad ↓',
     BTN_14: 'D-Pad ←',
     BTN_15: 'D-Pad →',
+    BTN_16: 'PS Tlačidlo',
+    BTN_17: 'Touchpad (PS4/PS5)',
     AXIS_LX_NEG: 'Ľavá páčka ←',
     AXIS_LX_POS: 'Ľavá páčka →',
     AXIS_LY_NEG: 'Ľavá páčka ↑',
@@ -214,7 +222,10 @@ export type ShopCategory =
   | 'tattoo'
   | 'bank'
   | 'dealership'
-  | 'safehouse';
+  | 'safehouse'
+  | 'cafe'
+  | 'club'
+  | 'precinct';
 
 export interface ShopLocation {
   id: string;
@@ -270,9 +281,23 @@ export interface CharacterCustomization {
   shadesColor: number;
 }
 
+export interface CharacterTheme {
+  accentHex: string;
+  secondaryHex: string;
+  textAccentClass: string;
+  borderAccentClass: string;
+  buttonBgClass: string;
+  badgeBgClass: string;
+  panelGlowClass: string;
+}
+
 export interface CharacterAccount {
   cash: number;
   bankBalance: number;
+  reputation: number;
+  savedX?: number;
+  savedZ?: number;
+  savedYaw?: number;
   customization: CharacterCustomization;
   skills: CharacterSkills;
   unlockedWeapons: Record<WeaponId, boolean>;
@@ -284,13 +309,40 @@ export interface CharacterProfile {
   id: CharacterId;
   name: string;
   role: string;
+  lifeStory: string;
+  homeShopId: string;
+  homeName: string;
+  homeSpawnX: number;
+  homeSpawnZ: number;
+  homeSpawnYaw: number;
   strengthNote: string;
   weaknessNote: string;
   skinColor: number;
   startingCash: number;
   startingBank: number;
+  startingReputation: number;
   startingSkills: CharacterSkills;
   defaults: CharacterCustomization;
+  uiTheme: CharacterTheme;
+}
+
+export function getReputationRank(rep: number, characterId: CharacterId): string {
+  if (characterId === 'kairo') {
+    if (rep >= 1500) return 'Ikona Neon Tide';
+    if (rep >= 750) return 'Majster siete';
+    if (rep >= 300) return 'Nočný producent';
+    return 'Klubový nováčik';
+  }
+  if (characterId === 'elena') {
+    if (rep >= 1500) return 'Veliteľka Coral Keys';
+    if (rep >= 750) return 'Eso oblohy';
+    if (rep >= 300) return 'Elitná operátorka';
+    return 'Pobrežná pilotka';
+  }
+  if (rep >= 1500) return 'Kráľ Palmetto Bay';
+  if (rep >= 750) return 'Legenda asfaltu';
+  if (rep >= 300) return 'Rešpektovaný jazdec';
+  return 'Pouličný nováčik';
 }
 
 export interface WeaponSpec {
@@ -418,6 +470,12 @@ export interface AiNpcFeedItem {
 export interface HudSnapshot {
   characterId: CharacterId;
   characterName: string;
+  characterRole: string;
+  characterLifeStory: string;
+  characterHomeName: string;
+  characterTheme: CharacterTheme;
+  reputation: number;
+  reputationRank: string;
   customization: CharacterCustomization;
   skills: CharacterSkills;
   health: number;
@@ -466,10 +524,12 @@ export interface HudSnapshot {
   promptText: string;
   nearbyShop: ShopLocation | null;
   insideShop: ShopLocation | null;
+  nearbyHiddenMission: HiddenMissionDef | null;
   toastText: string;
   toastType: 'info' | 'success' | 'warning';
   mission: ActiveMissionState;
   completedStoryIds: string[];
+  discoveredHiddenIds: string[];
   completedHiddenIds: string[];
   cutscene: CutsceneViewState;
   playerX: number;
@@ -694,11 +754,19 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
     id: 'dante',
     name: 'Dante Vance',
     role: 'Pouličný pretekár & Kuriér',
+    lifeStory:
+      'Bývalý víťaz ilegálnych šprintov na pobrežnej diaľnici, ktorý si vybudoval vlastnú dielňu v úkryte na západe mesta a pozná každú skratku cez lesy aj prístav.',
+    homeShopId: 'dantes_hideout',
+    homeName: "Dante's Hideout (Západ)",
+    homeSpawnX: -885,
+    homeSpawnZ: 365,
+    homeSpawnYaw: -Math.PI * 0.5,
     strengthNote: 'Silný šofér a výdrž',
     weaknessNote: 'Slabšia presnosť streľby a pilotovanie',
     skinColor: 0xd99b78,
     startingCash: 2500,
     startingBank: 4800,
+    startingReputation: 240,
     startingSkills: { driving: 64, shooting: 34, flying: 26, stamina: 60 },
     defaults: {
       jacketColor: 0x0e7490,
@@ -710,16 +778,33 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
       tattooStyle: 'none',
       shadesColor: 0x0f172a,
     },
+    uiTheme: {
+      accentHex: '#22d3ee',
+      secondaryHex: '#f59e0b',
+      textAccentClass: 'text-cyan-300',
+      borderAccentClass: 'border-cyan-400/45',
+      buttonBgClass: 'bg-cyan-400 hover:bg-cyan-300 text-slate-950',
+      badgeBgClass: 'bg-cyan-950/90 text-cyan-200 border-cyan-400/40',
+      panelGlowClass: 'border-cyan-500/30',
+    },
   },
   elena: {
     id: 'elena',
     name: 'Elena Cruz',
     role: 'Taktická pilotka & Strelkyňa',
+    lifeStory:
+      'Bývalá záchranárska pilotka z Coral Keys, ktorá býva v luxusnom Marina Lofte pri severnom kanáli a riadi letecké operácie s chladnou presnosťou.',
+    homeShopId: 'marina_loft',
+    homeName: 'Marina Loft (Severné pobrežie)',
+    homeSpawnX: 525,
+    homeSpawnZ: -842,
+    homeSpawnYaw: 1.18,
     strengthNote: 'Presná streľba a pilotovanie lietadiel',
     weaknessNote: 'Slabšia kontrola auta v šmyku',
     skinColor: 0xc6865c,
     startingCash: 3100,
     startingBank: 7200,
+    startingReputation: 380,
     startingSkills: { driving: 36, shooting: 68, flying: 64, stamina: 44 },
     defaults: {
       jacketColor: 0xbe123c,
@@ -730,6 +815,53 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
       beardStyle: 'clean',
       tattooStyle: 'none',
       shadesColor: 0x1e1b4b,
+    },
+    uiTheme: {
+      accentHex: '#fb7185',
+      secondaryHex: '#facc15',
+      textAccentClass: 'text-rose-300',
+      borderAccentClass: 'border-rose-400/45',
+      buttonBgClass: 'bg-rose-400 hover:bg-rose-300 text-slate-950',
+      badgeBgClass: 'bg-rose-950/90 text-rose-200 border-rose-400/40',
+      panelGlowClass: 'border-rose-500/30',
+    },
+  },
+  kairo: {
+    id: 'kairo',
+    name: 'Kairo Delgado',
+    role: 'Nočný DJ & Hacker z centra',
+    lifeStory:
+      'Rezidentný DJ podzemných klubov a digitálny stratég. Vo svojom štúdiovom lofte priamo v centre Palmetto Bay mixuje beaty a sleduje policajné frekvencie.',
+    homeShopId: 'pulse_studio_loft',
+    homeName: 'Pulse Studio Loft (Centrum)',
+    homeSpawnX: -62,
+    homeSpawnZ: -118,
+    homeSpawnYaw: 0.4,
+    strengthNote: 'Vysoká výdrž, nočný prehľad a taktická streľba',
+    weaknessNote: 'Menšie skúsenosti s ťažkým letectvom',
+    skinColor: 0xb97b56,
+    startingCash: 4200,
+    startingBank: 6500,
+    startingReputation: 310,
+    startingSkills: { driving: 52, shooting: 58, flying: 32, stamina: 72 },
+    defaults: {
+      jacketColor: 0x6d28d9,
+      shirtColor: 0x111827,
+      pantsColor: 0x0f172a,
+      hairStyle: 'slick',
+      hairColor: 0x0f172a,
+      beardStyle: 'goatee',
+      tattooStyle: 'compass',
+      shadesColor: 0x4c1d95,
+    },
+    uiTheme: {
+      accentHex: '#c084fc',
+      secondaryHex: '#34d399',
+      textAccentClass: 'text-purple-300',
+      borderAccentClass: 'border-purple-400/45',
+      buttonBgClass: 'bg-purple-400 hover:bg-purple-300 text-slate-950',
+      badgeBgClass: 'bg-purple-950/90 text-purple-200 border-purple-400/40',
+      panelGlowClass: 'border-purple-500/30',
     },
   },
 };
@@ -940,7 +1072,55 @@ export const SHOPS: ShopLocation[] = [
     yaw: 1.182,
     color: '#22c55e',
     accentHex: 0x22c55e,
-    shortLabel: 'APARTMÁN & VÝŤAH',
-    description: 'Luxusný pobrežný apartmán s výťahom na strechu',
+    shortLabel: 'DOM ELENA · VÝŤAH',
+    description: 'Luxusný pobrežný apartmán Eleny Cruz s výťahom na strechu',
+  },
+  {
+    id: 'pulse_studio_loft',
+    name: 'Pulse Studio Loft',
+    category: 'safehouse',
+    x: -72,
+    z: -102,
+    yaw: 2.75,
+    color: '#c084fc',
+    accentHex: 0xc084fc,
+    shortLabel: 'DOM KAIRO · ŠTÚDIO',
+    description: 'Centrálny DJ & hackerský loft Kaira Delgada so zvukovou réžiou a výťahom',
+  },
+  {
+    id: 'palmetto_bistro',
+    name: 'Palmetto Roastery Café',
+    category: 'cafe',
+    x: 92,
+    z: 96,
+    yaw: -2.356,
+    color: '#f59e0b',
+    accentHex: 0xf59e0b,
+    shortLabel: 'KAVIAREŇ',
+    description: 'Pobrežná kaviareň s teplými nápojmi, koláčikmi a posedením pri parku',
+  },
+  {
+    id: 'pbpd_precinct',
+    name: 'PBPD Ústredie Palmetto',
+    category: 'precinct',
+    x: 112,
+    z: -332,
+    yaw: 1.571,
+    color: '#38bdf8',
+    accentHex: 0x38bdf8,
+    shortLabel: 'POLÍCIA PBPD',
+    description: 'Hlavná budova polície PBPD s recepciou, celami a výbavou ochranných viest',
+  },
+  {
+    id: 'neon_reef_club',
+    name: 'Neon Reef Beach Club',
+    category: 'club',
+    x: 694,
+    z: -18,
+    yaw: -1.571,
+    color: '#ec4899',
+    accentHex: 0xec4899,
+    shortLabel: 'NOČNÝ KLUB',
+    description: 'Veľký plážový klub s DJ pultom, barom a VIP poschodím',
   },
 ];

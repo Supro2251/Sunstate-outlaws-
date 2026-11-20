@@ -243,24 +243,34 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     return t;
   };
 
-  // 1. Rich Realistic Asphalt Road (dark tarmac aggregate, subtle wear lanes, crisp markings)
-  const [roadC, roadCtx] = createCanvas(512, 512);
-  roadCtx.fillStyle = '#1b1f27';
-  roadCtx.fillRect(0, 0, 512, 512);
-  roadCtx.fillStyle = 'rgba(10, 12, 17, 0.48)';
-  roadCtx.fillRect(88, 0, 72, 512);
-  roadCtx.fillRect(352, 0, 72, 512);
-  for (let i = 0; i < 6500; i++) {
-    const v = 20 + Math.floor(Math.random() * 26);
+  // 1. Rich Realistic Asphalt Road (1024x512 dark aggregate, realistic tire tracks, crisp lane markings)
+  const [roadC, roadCtx] = createCanvas(1024, 512);
+  roadCtx.fillStyle = '#181c23';
+  roadCtx.fillRect(0, 0, 1024, 512);
+  // Subtle wheel-track wear in left & right lanes
+  roadCtx.fillStyle = 'rgba(8, 10, 14, 0.42)';
+  roadCtx.fillRect(160, 0, 110, 512);
+  roadCtx.fillRect(320, 0, 96, 512);
+  roadCtx.fillRect(608, 0, 96, 512);
+  roadCtx.fillRect(754, 0, 110, 512);
+  // Fine mineral asphalt aggregate noise
+  for (let i = 0; i < 16000; i++) {
+    const v = 18 + Math.floor(Math.random() * 28);
     roadCtx.fillStyle = `rgb(${v},${v + 2},${v + 6})`;
-    roadCtx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    roadCtx.fillRect(Math.random() * 1024, Math.random() * 512, 2, 2);
   }
-  roadCtx.fillStyle = '#cbd5e1';
-  roadCtx.fillRect(14, 0, 10, 512);
-  roadCtx.fillRect(488, 0, 10, 512);
-  roadCtx.fillStyle = '#ca8a04';
-  roadCtx.fillRect(249, 24, 14, 180);
-  roadCtx.fillRect(249, 280, 14, 180);
+  // Subtle shoulder darken band
+  roadCtx.fillStyle = 'rgba(6, 8, 12, 0.55)';
+  roadCtx.fillRect(0, 0, 26, 512);
+  roadCtx.fillRect(998, 0, 26, 512);
+  // Crisp white outer lane edge lines
+  roadCtx.fillStyle = '#d4dce6';
+  roadCtx.fillRect(28, 0, 14, 512);
+  roadCtx.fillRect(982, 0, 14, 512);
+  // Realistic dashed amber center line
+  roadCtx.fillStyle = '#d99b16';
+  roadCtx.fillRect(503, 28, 18, 178);
+  roadCtx.fillRect(503, 284, 18, 178);
   const asphaltRoad = track(finalizeColorTexture(roadC, maxAnisotropy, 1, 1));
   asphaltRoad.wrapS = THREE.ClampToEdgeWrapping;
 
@@ -347,25 +357,32 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   runway.wrapS = THREE.ClampToEdgeWrapping;
   runway.wrapT = THREE.ClampToEdgeWrapping;
 
-  // 6. Concrete Sidewalk Pavers
-  const [swC, swCtx] = createCanvas(256, 256);
-  swCtx.fillStyle = '#7b828e';
-  swCtx.fillRect(0, 0, 256, 256);
-  swCtx.strokeStyle = '#585f6b';
-  swCtx.lineWidth = 3;
-  for (let x = 0; x <= 256; x += 64) {
-    swCtx.beginPath();
-    swCtx.moveTo(x, 0);
-    swCtx.lineTo(x, 256);
-    swCtx.stroke();
+  // 6. Warm Coastal Limestone Flagstone Pavers (replaces plain grey square grid)
+  const [swC, swCtx] = createCanvas(512, 512);
+  swCtx.fillStyle = '#9b968d';
+  swCtx.fillRect(0, 0, 512, 512);
+  const stoneShades = ['#a8a296', '#9e988c', '#b0aa9e', '#948e82', '#a39d90'];
+  const rows = 4;
+  const cols = 4;
+  const tileH = 512 / rows;
+  const tileW = 512 / cols;
+  for (let r = 0; r < rows; r++) {
+    const offset = (r % 2) * (tileW * 0.5);
+    for (let c = -1; c <= cols; c++) {
+      const px = c * tileW + offset;
+      const py = r * tileH;
+      swCtx.fillStyle = stoneShades[(r * 3 + c + 7) % stoneShades.length];
+      swCtx.fillRect(px + 3, py + 3, tileW - 6, tileH - 6);
+      swCtx.strokeStyle = 'rgba(255, 250, 240, 0.14)';
+      swCtx.lineWidth = 2;
+      swCtx.strokeRect(px + 4, py + 4, tileW - 8, tileH - 8);
+    }
   }
-  for (let y = 0; y <= 256; y += 64) {
-    swCtx.beginPath();
-    swCtx.moveTo(0, y);
-    swCtx.lineTo(256, y);
-    swCtx.stroke();
+  for (let i = 0; i < 4500; i++) {
+    swCtx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(40,36,30,0.07)';
+    swCtx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
   }
-  const sidewalk = track(finalizeColorTexture(swC, maxAnisotropy, 16, 16));
+  const sidewalk = track(finalizeColorTexture(swC, maxAnisotropy, 14, 14));
 
   // 7. Coastal Sand
   const [sandC, sandCtx] = createCanvas(256, 256);
@@ -381,15 +398,22 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   }
   const sand = track(finalizeColorTexture(sandC, maxAnisotropy, 56, 56));
 
-  // 8. Lush Grass
-  const [grC, grCtx] = createCanvas(256, 256);
-  grCtx.fillStyle = '#2d5733';
-  grCtx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 2400; i++) {
-    grCtx.fillStyle = Math.random() > 0.5 ? '#36693d' : '#234427';
-    grCtx.fillRect(Math.random() * 256, Math.random() * 256, 3, 3);
+  // 8. Lush Organic Turf Grass (multi-tone blades & natural soil depth)
+  const [grC, grCtx] = createCanvas(512, 512);
+  grCtx.fillStyle = '#29502e';
+  grCtx.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 6500; i++) {
+    const pick = i % 3;
+    grCtx.fillStyle = pick === 0 ? '#326138' : pick === 1 ? '#224226' : '#3a6c3f';
+    const gx = Math.random() * 512;
+    const gy = Math.random() * 512;
+    grCtx.fillRect(gx, gy, 2, 5);
   }
-  const grass = track(finalizeColorTexture(grC, maxAnisotropy, 90, 90));
+  for (let i = 0; i < 900; i++) {
+    grCtx.fillStyle = 'rgba(110, 92, 54, 0.14)';
+    grCtx.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
+  }
+  const grass = track(finalizeColorTexture(grC, maxAnisotropy, 96, 96));
 
   // 9. Forest & Meadow Moss Ground
   const [fgC, fgCtx] = createCanvas(256, 256);
@@ -464,17 +488,27 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   const contactShadow = track(new THREE.CanvasTexture(shC));
   contactShadow.colorSpace = THREE.SRGBColorSpace;
 
-  // 15. Shop Interior Boutique Checker Tile Floor (natural stone, non-glaring)
-  const [flC, flCtx] = createCanvas(256, 256);
-  flCtx.fillStyle = '#94a3b8';
-  flCtx.fillRect(0, 0, 256, 256);
-  flCtx.fillStyle = '#788496';
-  for (let y = 0; y < 256; y += 64) {
-    for (let x = 0; x < 256; x += 64) {
-      if ((x / 64 + y / 64) % 2 === 0) flCtx.fillRect(x, y, 64, 64);
+  // 15. Warm Oak Wood Parquet Floor (replaces grey checker squares inside buildings!)
+  const [flC, flCtx] = createCanvas(512, 512);
+  flCtx.fillStyle = '#5c4129';
+  flCtx.fillRect(0, 0, 512, 512);
+  const plankShades = ['#6f4e32', '#64462c', '#775537', '#5b3f27', '#6a4b30'];
+  const plankH = 32;
+  const plankW = 128;
+  for (let y = 0; y < 512; y += plankH) {
+    const shift = ((y / plankH) % 3) * 42;
+    for (let x = -plankW; x < 512 + plankW; x += plankW) {
+      flCtx.fillStyle = plankShades[Math.abs((y / plankH) * 5 + Math.floor(x / plankW)) % plankShades.length];
+      flCtx.fillRect(x + shift + 1.5, y + 1.5, plankW - 3, plankH - 3);
+      flCtx.fillStyle = 'rgba(25, 14, 6, 0.16)';
+      flCtx.fillRect(x + shift + 4, y + plankH * 0.45, plankW - 12, 2);
     }
   }
-  const interiorFloor = track(finalizeColorTexture(flC, maxAnisotropy, 6, 6));
+  for (let i = 0; i < 2000; i++) {
+    flCtx.fillStyle = Math.random() > 0.5 ? 'rgba(255,220,170,0.04)' : 'rgba(20,10,4,0.06)';
+    flCtx.fillRect(Math.random() * 512, Math.random() * 512, 10, 1);
+  }
+  const interiorFloor = track(finalizeColorTexture(flC, maxAnisotropy, 5, 5));
 
   // 16. Luxury Marble Lobby Floor (Apex Trust & Marina Loft)
   const [mbC, mbCtx] = createCanvas(256, 256);

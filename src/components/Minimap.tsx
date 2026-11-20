@@ -14,8 +14,17 @@ interface MinimapProps {
   gpsTarget: { x: number; z: number; label: string } | null;
   gpsDistance: number;
   gpsTurnHint: string;
+  accentHex?: string;
   onOpenMap: () => void;
 }
+
+const PARK_ZONES = [
+  { x: 80, z: -490, r: 44 },
+  { x: 445, z: -100, r: 46 },
+  { x: 660, z: 320, r: 44 },
+  { x: -1380, z: -320, r: 46 },
+  { x: -520, z: 860, r: 44 },
+];
 
 export const Minimap: React.FC<MinimapProps> = ({
   playerX,
@@ -28,6 +37,7 @@ export const Minimap: React.FC<MinimapProps> = ({
   gpsTarget,
   gpsDistance,
   gpsTurnHint,
+  accentHex = '#22d3ee',
   onOpenMap,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,7 +50,7 @@ export const Minimap: React.FC<MinimapProps> = ({
 
     const w = canvas.width;
     const h = canvas.height;
-    const scale = 0.14;
+    const scale = 0.145;
 
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#0f172a';
@@ -54,6 +64,17 @@ export const Minimap: React.FC<MinimapProps> = ({
     if (forestRight > 0) {
       ctx.fillStyle = '#152c22';
       ctx.fillRect(0, 0, forestRight, h);
+    }
+
+    // Lush Grass Ground Blocks & Parks
+    ctx.fillStyle = '#162821';
+    ctx.fillRect(Math.max(0, forestRight), 0, Math.max(0, toMapX(750) - Math.max(0, forestRight)), h);
+
+    for (const pk of PARK_ZONES) {
+      ctx.fillStyle = '#22543d';
+      ctx.beginPath();
+      ctx.arc(toMapX(pk.x), toMapY(pk.z), pk.r * scale, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Redrock Lake
@@ -81,12 +102,27 @@ export const Minimap: React.FC<MinimapProps> = ({
     ctx.fillStyle = '#926239';
     ctx.fillRect(toMapX(850), toMapY(-9), 190 * scale, 18 * scale);
 
-    // Curved Road Splines & Forest Trails
+    // Curved Road Splines & Sidewalk Shoulders
     if (network) {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      // Curb outline pass
       for (const edge of network.edges) {
-        ctx.strokeStyle = edge.isDirt ? '#6b4f35' : '#475569';
+        if (edge.isDirt) continue;
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = Math.max(3, (edge.width + 3.2) * scale);
+        ctx.beginPath();
+        edge.samples.forEach((p, idx) => {
+          const mx = toMapX(p.x);
+          const my = toMapY(p.z);
+          if (idx === 0) ctx.moveTo(mx, my);
+          else ctx.lineTo(mx, my);
+        });
+        ctx.stroke();
+      }
+      // Asphalt/Dirt core pass
+      for (const edge of network.edges) {
+        ctx.strokeStyle = edge.isDirt ? '#7c5d40' : '#334155';
         ctx.lineWidth = Math.max(2, edge.width * scale);
         ctx.beginPath();
         edge.samples.forEach((p, idx) => {
@@ -99,10 +135,10 @@ export const Minimap: React.FC<MinimapProps> = ({
       }
     }
 
-    // Active GPS Route Polyline
+    // Active Road-Following GPS Route Polyline
     if (gpsRoute.length > 1) {
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = accentHex;
+      ctx.lineWidth = 3.2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -123,7 +159,7 @@ export const Minimap: React.FC<MinimapProps> = ({
       const by = Math.max(6, Math.min(h - 6, rawY));
 
       if (b.type === 'waypoint' || b.type === 'target') {
-        ctx.fillStyle = b.type === 'waypoint' ? '#22d3ee' : '#facc15';
+        ctx.fillStyle = b.type === 'waypoint' ? accentHex : '#facc15';
         ctx.beginPath();
         ctx.arc(bx, by, 5, 0, Math.PI * 2);
         ctx.fill();
@@ -151,18 +187,32 @@ export const Minimap: React.FC<MinimapProps> = ({
       }
     });
 
-    // Player Arrow
+    // Player Orientation Cone + Directional Arrow (always synchronized to playerYaw)
     ctx.save();
     ctx.translate(w * 0.5, h * 0.5);
-    ctx.rotate(-playerYaw + Math.PI);
-    ctx.fillStyle = '#f8fafc';
+    ctx.rotate(Math.PI - playerYaw);
+
+    // Subtle viewing/heading cone
+    ctx.fillStyle = `${accentHex}33`;
     ctx.beginPath();
-    ctx.moveTo(0, -7);
-    ctx.lineTo(5, 5);
-    ctx.lineTo(0, 2);
-    ctx.lineTo(-5, 5);
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-11, -24);
+    ctx.lineTo(11, -24);
     ctx.closePath();
     ctx.fill();
+
+    // Crisp Arrow
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -8.5);
+    ctx.lineTo(5.8, 6);
+    ctx.lineTo(0, 2.5);
+    ctx.lineTo(-5.8, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
 
     if (wantedStars > 0) {
@@ -170,34 +220,40 @@ export const Minimap: React.FC<MinimapProps> = ({
       ctx.lineWidth = 3;
       ctx.strokeRect(1.5, 1.5, w - 3, h - 3);
     }
-  }, [playerX, playerZ, playerYaw, blips, wantedStars, network, gpsRoute]);
+  }, [playerX, playerZ, playerYaw, blips, wantedStars, network, gpsRoute, accentHex]);
 
   return (
-    <div className="w-[208px] rounded-md overflow-hidden border border-white/15 bg-slate-950/92 shadow-lg">
+    <div
+      className="w-[216px] rounded-md overflow-hidden border bg-slate-950/92 shadow-lg"
+      style={{ borderColor: `${accentHex}55` }}
+    >
       <button
         onClick={onOpenMap}
         className="block w-full text-left relative group"
         title="Otvoriť celú GPS mapu (M)"
       >
-        <canvas ref={canvasRef} width={208} height={144} className="block" />
-        <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-slate-950/88 border border-white/15 text-[10px] font-medium text-slate-200 group-hover:text-cyan-300">
+        <canvas ref={canvasRef} width={216} height={148} className="block" />
+        <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-slate-950/90 border border-white/15 text-[10px] font-medium text-slate-200 group-hover:text-white">
           M · Mapa
         </span>
       </button>
 
       {gpsTarget ? (
-        <div className="px-2 py-1.5 bg-cyan-950/90 border-t border-cyan-400/30 flex items-center justify-between gap-1.5 text-[11px]">
+        <div
+          className="px-2 py-1.5 bg-slate-950/95 border-t flex items-center justify-between gap-1.5 text-[11px]"
+          style={{ borderTopColor: `${accentHex}55` }}
+        >
           <div className="flex items-center gap-1 min-w-0">
-            <Navigation className="w-3 h-3 text-cyan-300 shrink-0" />
-            <span className="truncate text-cyan-100 font-medium">{gpsTurnHint}</span>
+            <Navigation className="w-3 h-3 shrink-0" style={{ color: accentHex }} />
+            <span className="truncate text-slate-100 font-medium">{gpsTurnHint}</span>
           </div>
-          <span className="font-mono-num text-cyan-300 font-semibold shrink-0">
+          <span className="font-mono-num font-semibold shrink-0" style={{ color: accentHex }}>
             {gpsDistance}m
           </span>
         </div>
       ) : (
         <div className="px-2 py-1 bg-slate-950/95 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300">
-          <span className="font-display font-semibold tracking-wide text-amber-400">
+          <span className="font-display font-semibold tracking-wide" style={{ color: accentHex }}>
             PALMETTO BAY
           </span>
           <span className="font-mono-num text-slate-400">

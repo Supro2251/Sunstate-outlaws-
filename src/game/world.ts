@@ -142,7 +142,7 @@ function buildRoadRibbonGeometry(
   width: number,
   segments: number,
   length: number,
-  yOffset = 0.1,
+  yOffset = 0.12,
   getElevation?: (x: number, z: number) => number,
 ): THREE.BufferGeometry {
   const pts = curve.getSpacedPoints(segments);
@@ -153,14 +153,17 @@ function buildRoadRibbonGeometry(
 
   const halfW = width * 0.5;
   const up = new THREE.Vector3(0, 1, 0);
+  const tangent = new THREE.Vector3();
+  const right = new THREE.Vector3();
 
   for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
     const p = pts[i];
-    const tangent = curve.getTangentAt(t).setY(0);
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(segments, i + 1)];
+    tangent.set(next.x - prev.x, 0, next.z - prev.z);
     if (tangent.lengthSq() < 1e-6) tangent.set(0, 0, 1);
     else tangent.normalize();
-    const right = new THREE.Vector3().crossVectors(tangent, up).normalize();
+    right.crossVectors(tangent, up).normalize();
 
     const lx = p.x - right.x * halfW;
     const lz = p.z - right.z * halfW;
@@ -168,13 +171,19 @@ function buildRoadRibbonGeometry(
     const rz = p.z + right.z * halfW;
 
     const elev = getElevation
-      ? Math.max(getElevation(p.x, p.z), getElevation(lx, lz), getElevation(rx, rz))
+      ? Math.max(
+          getElevation(p.x, p.z),
+          getElevation(lx, lz),
+          getElevation(rx, rz),
+          getElevation((p.x + lx) * 0.5, (p.z + lz) * 0.5),
+          getElevation((p.x + rx) * 0.5, (p.z + rz) * 0.5),
+        )
       : 0;
     const y = elev + yOffset;
 
     positions.push(lx, y, lz, rx, y, rz);
     normals.push(0, 1, 0, 0, 1, 0);
-    const vCoord = (t * length) / 18;
+    const vCoord = ((i / segments) * length) / 18;
     uvs.push(0, vCoord, 1, vCoord);
 
     if (i < segments) {
@@ -510,11 +519,21 @@ export function buildPalmettoBayWorld(
     scene.add(isl);
   });
 
-  // 2. Curved Paved Roads & Dirt Forest Trails (Zero Z-Fighting & Terrain-Following!)
+  // 2. Curved Paved Roads, Limestone Sidewalk Curbs & Crisp Intersections (Zero Z-Fighting!)
   const roadMat = new THREE.MeshStandardMaterial({
     map: textures.asphaltRoad,
-    roughness: 0.92,
+    roughness: 0.9,
     metalness: 0.02,
+    envMapIntensity: 0.22,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+
+  const roadShoulderMat = new THREE.MeshStandardMaterial({
+    map: textures.sidewalk,
+    roughness: 0.92,
+    metalness: 0.01,
     envMapIntensity: 0.2,
     polygonOffset: true,
     polygonOffsetFactor: -1,
@@ -527,26 +546,53 @@ export function buildPalmettoBayWorld(
     metalness: 0.0,
     envMapIntensity: 0.14,
     polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   });
 
   const plazaAsphaltMat = new THREE.MeshStandardMaterial({
     map: textures.asphaltPlaza,
-    roughness: 0.92,
+    roughness: 0.9,
     metalness: 0.02,
-    envMapIntensity: 0.2,
+    envMapIntensity: 0.22,
     polygonOffset: true,
-    polygonOffsetFactor: -3,
-    polygonOffsetUnits: -3,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+  });
+
+  const crosswalkStripeMat = new THREE.MeshStandardMaterial({
+    color: 0xdbe3ee,
+    roughness: 0.85,
+    polygonOffset: true,
+    polygonOffsetFactor: -5,
+    polygonOffsetUnits: -5,
   });
 
   const nodeMaxWidth = new Map<number, number>();
+  const nodeDegree = new Map<number, number>();
   network.edges.forEach((edge, eIdx) => {
     nodeMaxWidth.set(edge.from, Math.max(nodeMaxWidth.get(edge.from) ?? 16, edge.width));
     nodeMaxWidth.set(edge.to, Math.max(nodeMaxWidth.get(edge.to) ?? 16, edge.width));
-    const segCount = Math.max(24, Math.ceil(edge.length / 5));
-    const yLayer = (edge.isDirt ? 0.14 : 0.085) + (eIdx % 7) * 0.004;
+    nodeDegree.set(edge.from, (nodeDegree.get(edge.from) ?? 0) + 1);
+    nodeDegree.set(edge.to, (nodeDegree.get(edge.to) ?? 0) + 1);
+    const segCount = Math.max(28, Math.ceil(edge.length / 2.8));
+
+    if (!edge.isDirt) {
+      // Raised coastal limestone sidewalk shoulder beneath urban/coastal paved roads
+      const curbGeo = buildRoadRibbonGeometry(
+        edge.curve,
+        edge.width + 4.4,
+        segCount,
+        edge.length,
+        0.065 + (eIdx % 5) * 0.002,
+        terrainElevation,
+      );
+      const curbMesh = new THREE.Mesh(curbGeo, roadShoulderMat);
+      curbMesh.receiveShadow = true;
+      scene.add(curbMesh);
+    }
+
+    const yLayer = (edge.isDirt ? 0.18 : 0.125) + (eIdx % 11) * 0.005;
     const ribbonGeo = buildRoadRibbonGeometry(
       edge.curve,
       edge.width,
@@ -562,16 +608,50 @@ export function buildPalmettoBayWorld(
 
   network.nodes.forEach((n) => {
     const isTrail = n.x < -1020 && n.z < 1200;
-    const discRadius = (nodeMaxWidth.get(n.id) ?? 18) * 0.55;
+    const maxW = nodeMaxWidth.get(n.id) ?? 18;
+    const discRadius = maxW * 0.56;
+    const baseH = terrainElevation(n.x, n.z);
+
+    if (!isTrail) {
+      const curbDisc = new THREE.Mesh(
+        new THREE.CircleGeometry(discRadius + 2.2, 28),
+        roadShoulderMat,
+      );
+      curbDisc.rotation.x = -Math.PI / 2;
+      curbDisc.position.set(n.x, baseH + 0.075, n.z);
+      curbDisc.receiveShadow = true;
+      scene.add(curbDisc);
+    }
+
     const disc = new THREE.Mesh(
-      new THREE.CircleGeometry(discRadius, 24),
+      new THREE.CircleGeometry(discRadius, 28),
       isTrail ? dirtMat : plazaAsphaltMat,
     );
     disc.rotation.x = -Math.PI / 2;
-    const baseH = terrainElevation(n.x, n.z);
-    disc.position.set(n.x, baseH + (isTrail ? 0.18 : 0.125), n.z);
+    disc.position.set(n.x, baseH + (isTrail ? 0.24 : 0.195), n.z);
     disc.receiveShadow = true;
     scene.add(disc);
+
+    // Subtle crisp crosswalk stripes on major urban intersections
+    if (!isTrail && (nodeDegree.get(n.id) ?? 0) >= 3 && Math.hypot(n.x, n.z) > 45 && n.x > -800) {
+      for (let side = 0; side < 4; side++) {
+        const ang = (side * Math.PI) / 2;
+        const dist = discRadius * 0.88;
+        const cx = n.x + Math.sin(ang) * dist;
+        const cz = n.z + Math.cos(ang) * dist;
+        for (let s = -2; s <= 2; s++) {
+          const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 2.7), crosswalkStripeMat);
+          bar.rotation.x = -Math.PI / 2;
+          bar.rotation.z = ang;
+          bar.position.set(
+            cx + Math.cos(ang) * (s * 1.9),
+            baseH + 0.205,
+            cz - Math.sin(ang) * (s * 1.9),
+          );
+          scene.add(bar);
+        }
+      }
+    }
   });
 
   // 3. Marked Parking Lots
@@ -1343,11 +1423,14 @@ export function buildPalmettoBayWorld(
     const isBank = shop.category === 'bank';
     const isClothing = shop.category === 'clothing';
     const isSafehouse = shop.category === 'safehouse';
-    const hasTwoFloors = isClothing || isSafehouse || isDealership;
+    const isCafe = shop.category === 'cafe';
+    const isClub = shop.category === 'club';
+    const isPrecinct = shop.category === 'precinct';
+    const hasTwoFloors = isClothing || isSafehouse || isDealership || isClub;
 
-    const bw = isArmory || isDealership || isCustoms || isBank ? 36 : 30;
-    const bd = isArmory ? 44 : isDealership || isBank || isCustoms ? 34 : 30;
-    const bh = hasTwoFloors ? 12.2 : isCustoms || isDealership ? 10.5 : 9.4;
+    const bw = isArmory || isDealership || isCustoms || isBank || isPrecinct ? 36 : 30;
+    const bd = isArmory ? 44 : isDealership || isBank || isCustoms || isPrecinct || isClub ? 34 : 30;
+    const bh = hasTwoFloors ? 12.2 : isCustoms || isDealership || isPrecinct ? 10.5 : 9.4;
 
     const centerX = shop.x - Math.sin(shop.yaw) * (bd * 0.5 + 1.5);
     const centerZ = shop.z - Math.cos(shop.yaw) * (bd * 0.5 + 1.5);
@@ -1355,13 +1438,13 @@ export function buildPalmettoBayWorld(
     shelterSpots.push({ x: centerX, z: centerZ });
 
     const interiorWallMat = new THREE.MeshStandardMaterial({
-      color: 0x94a3b8,
+      color: isClub ? 0x1e1b2e : isCafe ? 0xd6cfc2 : 0x94a3b8,
       roughness: 0.78,
       metalness: 0.05,
       envMapIntensity: 0.25,
     });
     const facadeIdx =
-      isClothing ? 1 : isSafehouse ? 2 : isBank ? 0 : isCustoms ? 3 : 4;
+      isClothing || isCafe ? 1 : isSafehouse || isClub ? 2 : isBank || isPrecinct ? 0 : isCustoms ? 3 : 4;
     const extMat = new THREE.MeshStandardMaterial({
       color: 0xd1d5db,
       map: textures.buildingWindows[facadeIdx],
@@ -2014,13 +2097,151 @@ export function buildPalmettoBayWorld(
         [0.12, 6.45, bh + 0.35],
         ['Prízemie · Obývačka', '2. Poschodie · Galéria', 'Strešná Terasa'],
       );
+
+      if (shop.id === 'pulse_studio_loft') {
+        // Kairo's DJ & Hacker Equipment inside Pulse Studio Loft!
+        const djDeck = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.05, 1.3), counterMat);
+        djDeck.position.set(2.5, 0.52, -bd * 0.5 + 7.2);
+        const turntableL = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.08, 16), rackMetalMat);
+        turntableL.position.set(1.5, 1.09, -bd * 0.5 + 7.2);
+        const turntableR = turntableL.clone();
+        turntableR.position.x = 3.5;
+        const mixerGlow = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.08, 0.65),
+          new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0xa855f7, emissiveIntensity: 1.4 }),
+        );
+        mixerGlow.position.set(2.5, 1.09, -bd * 0.5 + 7.2);
+        addLocalCollider(centerX, centerZ, shop.yaw, 2.5, -bd * 0.5 + 7.2, 4.4, 1.3, 0, 1.4);
+
+        const hackerDesk = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.86, 1.4), counterMat);
+        hackerDesk.position.set(-10.5, 0.43, -bd * 0.5 + 3.8);
+        const monMat = new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x10b981, emissiveIntensity: 0.9 });
+        [-11.4, -10.5, -9.6].forEach((mx) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.52, 0.08), monMat);
+          m.position.set(mx, 1.2, -bd * 0.5 + 3.3);
+          sGroup.add(m);
+        });
+        const serverRack = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.6, 1.1), counterMat);
+        serverRack.position.set(-12.8, 1.3, -bd * 0.5 + 8.5);
+        addLocalCollider(centerX, centerZ, shop.yaw, -10.5, -bd * 0.5 + 3.8, 3.8, 1.4, 0, 1.6);
+        addLocalCollider(centerX, centerZ, shop.yaw, -12.8, -bd * 0.5 + 8.5, 1.1, 1.1, 0, 2.7);
+        sGroup.add(djDeck, turntableL, turntableR, mixerGlow, hackerDesk, serverRack);
+      }
+    } else if (isCafe) {
+      // Cozy Specialty Coffee Roastery & Bistro Interior: Espresso Bar, Pastry Vitrine & Café Tables!
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(10.5, 1.12, 1.6), woodFurnitureMat);
+      bar.position.set(0, 0.56, -bd * 0.5 + 3.6);
+      const espressoMach = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.65, 0.9), rackMetalMat);
+      espressoMach.position.set(-2.2, 1.44, -bd * 0.5 + 3.5);
+      const pastryCase = new THREE.Mesh(
+        new THREE.BoxGeometry(3.2, 0.68, 1.1),
+        new THREE.MeshPhysicalMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.4, roughness: 0.15 }),
+      );
+      pastryCase.position.set(2.5, 1.46, -bd * 0.5 + 3.7);
+      sGroup.add(bar, espressoMach, pastryCase);
+      addLocalCollider(centerX, centerZ, shop.yaw, 0, -bd * 0.5 + 3.6, 10.5, 1.6, 0, 1.9);
+
+      const chairMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.68 });
+      [
+        [-8.0, 2.5],
+        [8.0, 2.5],
+        [-8.0, 8.5],
+        [8.0, 8.5],
+      ].forEach(([tx, tz]) => {
+        const tTop = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.1, 20), woodFurnitureMat);
+        tTop.position.set(tx, 0.82, tz);
+        const tStem = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.35, 0.8, 14), counterMat);
+        tStem.position.set(tx, 0.4, tz);
+        const cL = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.3, 0.55, 12), chairMat);
+        cL.position.set(tx - 1.35, 0.28, tz);
+        const cR = cL.clone();
+        cR.position.x = tx + 1.35;
+        sGroup.add(tTop, tStem, cL, cR);
+        addLocalCircleCollider(centerX, centerZ, shop.yaw, tx, tz, 1.1, 0, 1.2);
+      });
+    } else if (isPrecinct) {
+      // Palmetto Bay Police Department Precinct: Reception Counter, Holding Cell, Evidence Wall & Briefing Room!
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(12.0, 1.2, 1.6), counterMat);
+      desk.position.set(-2.5, 0.6, 5.5);
+      const shield = new THREE.Mesh(
+        new THREE.BoxGeometry(11.6, 1.1, 0.12),
+        new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35, roughness: 0.15 }),
+      );
+      shield.position.set(-2.5, 1.75, 5.3);
+      sGroup.add(desk, shield);
+      addLocalCollider(centerX, centerZ, shop.yaw, -2.5, 5.5, 12.0, 1.6, 0, 2.4);
+
+      const briefTable = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.9, 3.0), woodFurnitureMat);
+      briefTable.position.set(-6.0, 0.45, -bd * 0.5 + 6.5);
+      const evidenceRack = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.8, 9.5), rackMetalMat);
+      evidenceRack.position.set(-bw * 0.5 + 1.2, 1.4, -3.5);
+      sGroup.add(briefTable, evidenceRack);
+      addLocalCollider(centerX, centerZ, shop.yaw, -6.0, -bd * 0.5 + 6.5, 8.5, 3.0, 0, 1.5);
+      addLocalCollider(centerX, centerZ, shop.yaw, -bw * 0.5 + 1.2, -3.5, 1.2, 9.5, 0, 2.9);
+
+      // Holding cell corner with steel bars & bench
+      const cellBench = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.55, 1.0), rackMetalMat);
+      cellBench.position.set(10.5, 0.28, -bd * 0.5 + 2.2);
+      sGroup.add(cellBench);
+      addLocalCollider(centerX, centerZ, shop.yaw, 10.5, -bd * 0.5 + 2.2, 4.2, 1.0, 0, 1.0);
+      for (let b = 6; b <= 15; b += 1.1) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 4.2, 8), rackMetalMat);
+        bar.position.set(b, 2.1, -bd * 0.5 + 7.5);
+        sGroup.add(bar);
+      }
+      addLocalCollider(centerX, centerZ, shop.yaw, 10.5, -bd * 0.5 + 7.5, 9.2, 0.25, 0, 4.2);
+    } else if (isClub) {
+      // Neon Reef Nightclub: Glowing Dancefloor Stage, DJ Rig, Curved Bar & VIP Mezzanine Lounge!
+      const danceFloor = new THREE.Mesh(
+        new THREE.BoxGeometry(11.0, 0.16, 11.0),
+        new THREE.MeshStandardMaterial({ color: 0xec4899, emissive: 0xa855f7, emissiveIntensity: 0.45, roughness: 0.2 }),
+      );
+      danceFloor.position.set(0, 0.18, 2.0);
+      const stage = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.8, 3.4), counterMat);
+      stage.position.set(0, 0.4, -bd * 0.5 + 3.4);
+      const djRig = new THREE.Mesh(
+        new THREE.BoxGeometry(4.4, 1.1, 1.1),
+        new THREE.MeshStandardMaterial({ color: 0x06b6d4, emissive: 0x06b6d4, emissiveIntensity: 0.8 }),
+      );
+      djRig.position.set(0, 1.35, -bd * 0.5 + 3.6);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.15, 10.5), counterMat);
+      bar.position.set(-bw * 0.5 + 3.2, 0.58, 1.5);
+      const vipSofa = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.65, 4.2, 6, 10),
+        new THREE.MeshStandardMaterial({ color: 0x7e22ce, roughness: 0.72 }),
+      );
+      vipSofa.rotation.x = Math.PI / 2;
+      vipSofa.position.set(bw * 0.5 - 2.6, 0.55, 2.0);
+      sGroup.add(danceFloor, stage, djRig, bar, vipSofa);
+      addLocalCollider(centerX, centerZ, shop.yaw, 0, -bd * 0.5 + 3.4, 9.0, 3.4, 0, 2.2);
+      addLocalCollider(centerX, centerZ, shop.yaw, -bw * 0.5 + 3.2, 1.5, 1.5, 10.5, 0, 1.8);
+      addLocalCollider(centerX, centerZ, shop.yaw, bw * 0.5 - 2.6, 2.0, 1.3, 5.2, 0, 1.4);
+
+      const mezz = new THREE.Mesh(new THREE.BoxGeometry(bw - 1.2, 0.45, bd * 0.42), marbleFloorMat);
+      mezz.position.set(0, 6.2, -bd * 0.27);
+      const mezzRail = new THREE.Mesh(new THREE.BoxGeometry(bw - 4.8, 1.0, 0.14), rackMetalMat);
+      mezzRail.position.set(-1.8, 6.9, -bd * 0.27 + bd * 0.21 - 0.18);
+      sGroup.add(mezz, mezzRail);
+      addLocalCollider(centerX, centerZ, shop.yaw, -1.8, -bd * 0.27 + bd * 0.21 - 0.18, bw - 4.8, 0.25, 6.2, 8.0);
+      const [mwx, mwz] = localToWorld(centerX, centerZ, shop.yaw, 0, -bd * 0.27);
+      roofDecks.push({ cx: mwx, cz: mwz, halfW: bw * 0.5 - 0.6, halfD: bd * 0.21, y: 6.45, yaw: shop.yaw });
+      const [elx, elz] = localToWorld(centerX, centerZ, shop.yaw, bw * 0.5 - 3.2, -bd * 0.5 + 3.2);
+      createWorkingElevator(
+        `elev_${shop.id}`,
+        `${shop.name} · Výťah`,
+        elx,
+        elz,
+        shop.yaw,
+        [0.12, 6.45, bh + 0.35],
+        ['Parket & Bar', 'VIP Galéria (2. posch.)', 'Strešná Terasa'],
+      );
     } else {
       // Barber / Tattoo Furnished Studio with Hydraulic Chairs, Lit Mirrors, Flash Art Wall & Waiting Lounge
       const desk = new THREE.Mesh(new THREE.CapsuleGeometry(0.65, 5.6, 6, 12), counterMat);
       desk.rotation.z = Math.PI / 2;
       desk.scale.set(0.85, 1.0, 0.9);
       desk.position.set(0, 0.52, -bd * 0.5 + 3.2);
-      addLocalCollider(centerX, centerZ, shop.yaw, 0, -bd * 0.5 + 3.2, 6.6, 1.3, 0, 1.4);
+      addLocalCollider(centerX, centerZ, shop.yaw, 0, -bd * 0.5 + 3.2, 6.4, 1.2, 0, 1.4);
 
       [-6.5, 0, 6.5].forEach((sx) => {
         const chairMat = new THREE.MeshStandardMaterial({ color: shop.accentHex, roughness: 0.48 });
@@ -2038,8 +2259,8 @@ export function buildPalmettoBayWorld(
         const stationShelf = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 0.65), counterMat);
         stationShelf.position.set(sx, 0.42, -2.2);
         sGroup.add(chairBase, chairSeat, chairBack, mirror, stationShelf);
-        addLocalCircleCollider(centerX, centerZ, shop.yaw, sx, 1.0, 0.72, 0, 1.5);
-        addLocalCollider(centerX, centerZ, shop.yaw, sx, -2.2, 2.3, 0.75, 0, 1.5);
+        addLocalCircleCollider(centerX, centerZ, shop.yaw, sx, 1.0, 0.62, 0, 1.5);
+        addLocalCollider(centerX, centerZ, shop.yaw, sx, -2.2, 2.2, 0.65, 0, 1.5);
       });
 
       // Waiting Sofa + Magazine Table along Right Side
@@ -2049,7 +2270,7 @@ export function buildPalmettoBayWorld(
       );
       waitSofa.rotation.x = Math.PI / 2;
       waitSofa.position.set(bw * 0.5 - 2.2, 0.55, 5.0);
-      addLocalCollider(centerX, centerZ, shop.yaw, bw * 0.5 - 2.2, 5.0, 1.3, 4.6, 0, 1.4);
+      addLocalCollider(centerX, centerZ, shop.yaw, bw * 0.5 - 2.2, 5.0, 1.2, 4.4, 0, 1.4);
       sGroup.add(desk, waitSofa);
     }
 
@@ -2237,6 +2458,100 @@ export function buildPalmettoBayWorld(
     kind: 'fire',
   });
 
+  // 9C. 5 Landscaped City & Canyon Parks (Walkways, Fountains, Benches, Flowerbeds & Pergolas)
+  const parkSpots: Array<{ name: string; x: number; z: number; size: number }> = [
+    { name: 'Midtown Central Park', x: 80, z: -490, size: 54 },
+    { name: 'Bayview Promenade Park', x: 445, z: -100, size: 50 },
+    { name: 'Coral Keys Palms Park', x: 660, z: 320, size: 46 },
+    { name: 'Redrock Canyon Botanical Park', x: -1380, z: -320, size: 52 },
+    { name: 'Southside Harbor Park', x: -520, z: 860, size: 56 },
+  ];
+  const flowerRedMat = new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.8 });
+  const flowerGoldMat = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.8 });
+  parkSpots.forEach((pk) => {
+    const baseY = terrainElevation(pk.x, pk.z);
+    const half = pk.size * 0.5;
+    occupiedFootprints.push({ cx: pk.x, cz: pk.z, hw: half + 2, hd: half + 2, yaw: 0 });
+    shelterSpots.push({ x: pk.x + 12, z: pk.z - 12 });
+
+    const pGroup = new THREE.Group();
+    pGroup.position.set(pk.x, baseY, pk.z);
+
+    // Flagstone cross walkways & central circular plaza
+    const pathX = new THREE.Mesh(new THREE.BoxGeometry(pk.size, 0.14, 4.4), sidewalkMat);
+    pathX.position.y = 0.08;
+    pathX.receiveShadow = true;
+    const pathZ = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.14, pk.size), sidewalkMat);
+    pathZ.position.y = 0.085;
+    pathZ.receiveShadow = true;
+    const plaza = new THREE.Mesh(new THREE.CylinderGeometry(8.6, 8.8, 0.16, 28), sidewalkMat);
+    plaza.position.y = 0.09;
+    plaza.receiveShadow = true;
+    pGroup.add(pathX, pathZ, plaza);
+
+    // Central park fountain with tight stone rim collider
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(3.8, 0.38, 10, 28), basinMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.42;
+    const fWater = new THREE.Mesh(new THREE.CircleGeometry(3.6, 28), lakeMat);
+    fWater.rotation.x = -Math.PI / 2;
+    fWater.position.y = 0.46;
+    const centerSpire = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.75, 2.2, 14), concreteMat);
+    centerSpire.position.y = 1.1;
+    pGroup.add(rim, fWater, centerSpire);
+    circleColliders.push({ cx: pk.x, cz: pk.z, r: 4.15, minY: baseY, maxY: baseY + 2.4 });
+
+    // Wooden park benches along plaza
+    [
+      [-5.8, -5.8, Math.PI * 0.25],
+      [5.8, -5.8, -Math.PI * 0.25],
+      [-5.8, 5.8, Math.PI * 0.75],
+      [5.8, 5.8, -Math.PI * 0.75],
+    ].forEach(([bx, bz, byaw]) => {
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.14, 0.75), woodFurnitureMat);
+      seat.position.set(bx, 0.48, bz);
+      seat.rotation.y = byaw;
+      const back = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.55, 0.12), woodFurnitureMat);
+      back.position.set(bx, 0.78, bz);
+      back.rotation.y = byaw;
+      pGroup.add(seat, back);
+      addLocalCollider(pk.x, pk.z, byaw, bx, bz, 2.4, 0.8, baseY, baseY + 1.0);
+    });
+
+    // Shade Pergola in corner
+    const pergRoof = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.24, 6.8), pierWoodMat);
+    pergRoof.position.set(12, 3.6, -12);
+    pergRoof.castShadow = true;
+    pGroup.add(pergRoof);
+    [
+      [9.1, -14.9],
+      [14.9, -14.9],
+      [9.1, -9.1],
+      [14.9, -9.1],
+    ].forEach(([px, pz]) => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 3.6, 10), woodFurnitureMat);
+      post.position.set(px, 1.8, pz);
+      pGroup.add(post);
+      circleColliders.push({ cx: pk.x + px, cz: pk.z + pz, r: 0.18, minY: baseY, maxY: baseY + 3.6 });
+    });
+
+    // Landscaped flowerbeds
+    [
+      [-12, -12],
+      [-12, 12],
+      [12, 12],
+    ].forEach(([fx, fz], idx) => {
+      const bed = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.6, 2.8, 0.35, 16),
+        idx % 2 === 0 ? flowerRedMat : flowerGoldMat,
+      );
+      bed.position.set(fx, 0.18, fz);
+      pGroup.add(bed);
+    });
+
+    scene.add(pGroup);
+  });
+
   // 10. Skyline & District Filler Buildings (Full Box-Edge Road Clearance & Zero Shop Overlap!)
   const cityBlocks: Array<[number, number, number, number, number, number]> = [
     [-95, -145, 28, 28, 52, 3],
@@ -2393,7 +2708,7 @@ export function buildPalmettoBayWorld(
     crownInst.setMatrixAt(i, dummy.matrix);
     palmColor.setHex(i % 2 === 0 ? 0x15803d : 0x16a34a);
     crownInst.setColorAt(i, palmColor);
-    circleColliders.push({ cx: px, cz: pz, r: 0.52 * scale, minY: baseY, maxY: baseY + 8.5 * scale });
+    circleColliders.push({ cx: px, cz: pz, r: 0.34 * scale, minY: baseY, maxY: baseY + 8.5 * scale });
   });
   trunkInst.instanceMatrix.needsUpdate = true;
   crownInst.instanceMatrix.needsUpdate = true;
@@ -2440,7 +2755,7 @@ export function buildPalmettoBayWorld(
     dummy.updateMatrix();
     pineTrunkInst.setMatrixAt(i, dummy.matrix);
     pineFoliageInst.setMatrixAt(i, dummy.matrix);
-    circleColliders.push({ cx: px, cz: pz, r: 0.62 * sc, minY: baseY, maxY: baseY + 12 * sc });
+    circleColliders.push({ cx: px, cz: pz, r: 0.44 * sc, minY: baseY, maxY: baseY + 12 * sc });
   });
   pineTrunkInst.instanceMatrix.needsUpdate = true;
   pineFoliageInst.instanceMatrix.needsUpdate = true;
@@ -2448,7 +2763,7 @@ export function buildPalmettoBayWorld(
   pineFoliageInst.computeBoundingSphere();
   scene.add(pineTrunkInst, pineFoliageInst);
 
-  // 13. Curved Gooseneck Streetlights along Paved Roads (Strict Road & Building Clearance + Solid Pole Colliders!)
+  // 13. Curved Gooseneck Streetlights along Paved Roads (Strict Road & Building Clearance + Tight Pole Colliders!)
   const poleMat = new THREE.MeshStandardMaterial({
     color: 0x334155,
     metalness: 0.68,
@@ -2491,7 +2806,7 @@ export function buildPalmettoBayWorld(
     bulb.position.set(0, 7.12, 1.48);
     group.add(pole, arm, bulb);
     scene.add(group);
-    circleColliders.push({ cx: lx, cz: lz, r: 0.32, minY: 0, maxY: 7.2 });
+    circleColliders.push({ cx: lx, cz: lz, r: 0.18, minY: 0, maxY: 7.2 });
   });
 
   // 14. Smooth Organic Volumetric Sky Clouds

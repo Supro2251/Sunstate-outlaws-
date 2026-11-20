@@ -1,5 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Compass, MapPin, Navigation, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  Compass,
+  Crosshair,
+  MapPin,
+  Navigation,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
+import { HIDDEN_MISSIONS } from '../game/missions';
 import { RoadNetwork } from '../game/roadNetwork';
 import { GpsPoint, RemoteFriendInfo, SHOPS, ShopLocation } from '../game/types';
 
@@ -9,6 +19,9 @@ interface InteractiveMapModalProps {
   playerZ: number;
   playerYaw: number;
   onlineFriends: RemoteFriendInfo[];
+  discoveredHiddenIds: string[];
+  completedHiddenIds: string[];
+  accentHex?: string;
   gpsTarget: { x: number; z: number; label: string } | null;
   gpsRoute: GpsPoint[];
   gpsDistance: number;
@@ -17,12 +30,23 @@ interface InteractiveMapModalProps {
   onClose: () => void;
 }
 
+const PARK_ZONES = [
+  { x: 80, z: -490, r: 44, label: 'Centrálny Park Sever' },
+  { x: 445, z: -100, r: 46, label: 'Botanický Park Midtown' },
+  { x: 660, z: 320, r: 44, label: 'Pobrežný Park Flamingo' },
+  { x: -1380, z: -320, r: 46, label: 'Lesný Park Redrock' },
+  { x: -520, z: 860, r: 44, label: 'Južný Park Prístav' },
+];
+
 export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
   network,
   playerX,
   playerZ,
   playerYaw,
   onlineFriends,
+  discoveredHiddenIds,
+  completedHiddenIds,
+  accentHex = '#22d3ee',
   gpsTarget,
   gpsRoute,
   gpsDistance,
@@ -31,11 +55,19 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
   onClose,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [zoom, setZoom] = useState(0.17);
-  const [pan, setPan] = useState({ x: 65, y: 0 });
+  const [zoom, setZoom] = useState(0.22);
+  const [pan, setPan] = useState(() => ({
+    x: -playerX * 0.22,
+    y: -playerZ * 0.22,
+  }));
   const [dragging, setDragging] = useState(false);
   const dragMovedRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
+
+  const centerOnPlayer = (targetZoom?: number) => {
+    const z = targetZoom ?? zoom;
+    setPan({ x: -playerX * z, y: -playerZ * z });
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,7 +85,7 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
     const toScreenX = (wx: number) => w * 0.5 + pan.x + wx * zoom;
     const toScreenY = (wz: number) => h * 0.5 + pan.y + wz * zoom;
 
-    // Terrain Regions (Canyon/Forest, Urban, Beach, Ocean)
+    // Terrain Regions (Canyon/Forest, Lush Urban Grass, Beach, Ocean)
     ctx.fillStyle = '#142a21';
     ctx.fillRect(toScreenX(-2500), toScreenY(-2200), 1460 * zoom, 4400 * zoom);
 
@@ -65,6 +97,19 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
 
     ctx.fillStyle = '#0c4a6e';
     ctx.fillRect(toScreenX(920), toScreenY(-2200), 1600 * zoom, 4400 * zoom);
+
+    // Landscaped Parks
+    for (const pk of PARK_ZONES) {
+      const px = toScreenX(pk.x);
+      const py = toScreenY(pk.z);
+      ctx.fillStyle = '#22543d';
+      ctx.beginPath();
+      ctx.arc(px, py, pk.r * zoom, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#34d39944';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
 
     // Redrock Lake & Coral Island
     ctx.fillStyle = '#0c4a6e';
@@ -89,7 +134,7 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
     ctx.fillRect(toScreenX(350), toScreenY(-1136), 340 * zoom, 32 * zoom);
 
     // Geographic Watermark Labels
-    ctx.fillStyle = 'rgba(226, 232, 240, 0.32)';
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.35)';
     ctx.font = '600 11px "Chakra Petch", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('CENTRUM PALMETTO', toScreenX(0), toScreenY(-15));
@@ -99,12 +144,27 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
     ctx.fillText('KAŇON & JAZERO REDROCK', toScreenX(-1780), toScreenY(180));
     ctx.fillText('ZÁLIV CORAL KEYS', toScreenX(1180), toScreenY(120));
 
-    // Curved Road Splines & Forest Dirt Trails
+    // Curved Road Splines with Curbs & Junctions
     if (network) {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      // Curb sidewalk pass
       for (const edge of network.edges) {
-        ctx.strokeStyle = edge.isDirt ? '#78573a' : '#475569';
+        if (edge.isDirt) continue;
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = Math.max(3.5, (edge.width + 4.2) * zoom);
+        ctx.beginPath();
+        edge.samples.forEach((p, idx) => {
+          const sx = toScreenX(p.x);
+          const sy = toScreenY(p.z);
+          if (idx === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        });
+        ctx.stroke();
+      }
+      // Asphalt / dirt core pass
+      for (const edge of network.edges) {
+        ctx.strokeStyle = edge.isDirt ? '#78573a' : '#334155';
         ctx.lineWidth = Math.max(2, edge.width * zoom);
         ctx.beginPath();
         edge.samples.forEach((p, idx) => {
@@ -117,10 +177,10 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
       }
     }
 
-    // Active GPS Route Line
+    // Active Road-Only GPS Route Line
     if (gpsRoute.length > 1) {
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = accentHex;
+      ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -132,6 +192,27 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
       });
       ctx.stroke();
     }
+
+    // Uncompleted Random Missions in World (Completed ones vanish from map & stay in Menu -> Náhodné misie)
+    HIDDEN_MISSIONS.forEach((hm) => {
+      if (completedHiddenIds.includes(hm.id)) return;
+      const hx = toScreenX(hm.x);
+      const hy = toScreenY(hm.z);
+      const isDiscovered = discoveredHiddenIds.includes(hm.id);
+      ctx.fillStyle = isDiscovered ? '#fbbf24' : 'rgba(251, 191, 36, 0.55)';
+      ctx.beginPath();
+      ctx.arc(hx, hy, isDiscovered ? 5.5 : 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#090d1b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      if (isDiscovered) {
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`★ ${hm.title}`, hx + 7, hy + 3);
+      }
+    });
 
     // Shop Icons & Labels
     SHOPS.forEach((s) => {
@@ -168,31 +249,74 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
     if (gpsTarget) {
       const tx = toScreenX(gpsTarget.x);
       const ty = toScreenY(gpsTarget.z);
-      ctx.strokeStyle = '#22d3ee';
+      ctx.strokeStyle = accentHex;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.arc(tx, ty, 11, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.fillStyle = '#22d3ee';
+      ctx.fillStyle = accentHex;
       ctx.beginPath();
       ctx.arc(tx, ty, 4, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Player Marker
+    // Prominent Player Position Halo + Orientation Cone + Directional Arrow
+    const px = toScreenX(playerX);
+    const py = toScreenY(playerZ);
     ctx.save();
-    ctx.translate(toScreenX(playerX), toScreenY(playerZ));
-    ctx.rotate(-playerYaw + Math.PI);
-    ctx.fillStyle = '#ffffff';
+    ctx.translate(px, py);
+
+    // Outer locator ring
+    ctx.strokeStyle = accentHex;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, -9);
-    ctx.lineTo(6, 7);
-    ctx.lineTo(0, 3);
-    ctx.lineTo(-6, 7);
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.rotate(Math.PI - playerYaw);
+
+    // Forward field-of-view / heading cone
+    ctx.fillStyle = `${accentHex}44`;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-16, -38);
+    ctx.lineTo(16, -38);
     ctx.closePath();
     ctx.fill();
+
+    // Crisp directional arrow
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(7.5, 8);
+    ctx.lineTo(0, 3.5);
+    ctx.lineTo(-7.5, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
-  }, [network, playerX, playerZ, playerYaw, onlineFriends, gpsTarget, gpsRoute, zoom, pan]);
+
+    // Player label badge
+    ctx.fillStyle = accentHex;
+    ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('TY', px, py + 24);
+  }, [
+    network,
+    playerX,
+    playerZ,
+    playerYaw,
+    onlineFriends,
+    discoveredHiddenIds,
+    completedHiddenIds,
+    accentHex,
+    gpsTarget,
+    gpsRoute,
+    zoom,
+    pan,
+  ]);
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -235,43 +359,70 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
     }
     if (clickedShop) {
       onSetWaypoint(clickedShop.x, clickedShop.z, clickedShop.name);
-    } else {
-      onSetWaypoint(Math.round(wx), Math.round(wz), 'Vlastný GPS bod');
+      return;
     }
+
+    for (const hm of HIDDEN_MISSIONS) {
+      if (completedHiddenIds.includes(hm.id)) continue;
+      if (Math.hypot(hm.x - wx, hm.z - wz) < 15 / zoom) {
+        const label = discoveredHiddenIds.includes(hm.id)
+          ? `Výzva: ${hm.title}`
+          : `Neznáma lokalita (${hm.district})`;
+        onSetWaypoint(hm.x, hm.z, label);
+        return;
+      }
+    }
+
+    onSetWaypoint(Math.round(wx), Math.round(wz), 'Vlastný GPS bod');
   };
+
+  const headingDeg = Math.round((((180 - (playerYaw * 180) / Math.PI) % 360) + 360) % 360);
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-slate-950/88 p-4">
-      <div className="w-full max-w-5xl rounded-lg bg-slate-900 border border-white/15 shadow-2xl overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-4">
+      <div
+        className="w-full max-w-5xl rounded-lg bg-slate-900 border shadow-2xl overflow-hidden flex flex-col"
+        style={{ borderColor: `${accentHex}55` }}
+      >
+        <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Compass className="w-5 h-5 text-cyan-400" />
+            <Compass className="w-5 h-5" style={{ color: accentHex }} />
             <div>
               <h2 className="font-display text-base font-bold text-white">
-                Mapa Palmetto Bay & Coral Keys County (GPS)
+                Mapa Palmetto Bay & Coral Keys County (GPS po cestách)
               </h2>
               <p className="text-xs text-slate-400">
-                Potiahni pre posun · Koliesko na priblíženie · Klikni pre nastavenie GPS trasy
+                Pozícia: {Math.round(playerX)}, {Math.round(playerZ)} · Smer pohľadu: {headingDeg}° · Klikni na mapu pre najkratšiu cestu
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {gpsTarget && (
-              <div className="px-3 py-1 rounded bg-cyan-950 border border-cyan-400/40 text-xs text-cyan-200 flex items-center gap-2">
-                <Navigation className="w-3.5 h-3.5 text-cyan-300" />
+              <div
+                className="px-3 py-1 rounded bg-slate-950 border text-xs text-slate-100 flex items-center gap-2"
+                style={{ borderColor: `${accentHex}66` }}
+              >
+                <Navigation className="w-3.5 h-3.5" style={{ color: accentHex }} />
                 <span>
                   {gpsTarget.label} ({gpsDistance}m)
                 </span>
                 <button
                   onClick={onClearWaypoint}
-                  className="text-cyan-300 hover:text-white ml-1"
+                  className="text-slate-300 hover:text-white ml-1"
                   title="Zrušiť GPS trasu"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
+            <button
+              onClick={() => centerOnPlayer()}
+              className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-white/10 text-xs font-medium text-white flex items-center gap-1.5"
+              title="Vycentrovať mapu na tvoju šípku"
+            >
+              <Crosshair className="w-3.5 h-3.5" style={{ color: accentHex }} /> Na hráča
+            </button>
             <button
               onClick={onClose}
               className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-white"
@@ -310,12 +461,19 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
                 <ZoomOut className="w-4 h-4" />
               </button>
               <button
+                onClick={() => centerOnPlayer(0.24)}
+                className="p-2 rounded bg-slate-900/95 border border-white/15 text-slate-200 hover:text-white"
+                title="Vycentrovať na aktuálnu pozíciu"
+              >
+                <Crosshair className="w-4 h-4" style={{ color: accentHex }} />
+              </button>
+              <button
                 onClick={() => {
-                  setZoom(0.17);
-                  setPan({ x: 65, y: 0 });
+                  setZoom(0.15);
+                  setPan({ x: 55, y: 0 });
                 }}
                 className="p-2 rounded bg-slate-900/95 border border-white/15 text-slate-200 hover:text-white"
-                title="Resetovať pohľad"
+                title="Zobraziť celý okres"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -324,7 +482,7 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
 
           <div className="w-full md:w-64 border-t md:border-t-0 md:border-l border-white/10 bg-slate-900 p-3 overflow-y-auto">
             <div className="text-xs font-semibold text-slate-300 mb-2">
-              Obchody & Lokality (Klik pre GPS)
+              Budovy & Lokality (Klik pre GPS)
             </div>
             <div className="space-y-1.5">
               {SHOPS.map((s) => {
@@ -333,9 +491,14 @@ export const InteractiveMapModal: React.FC<InteractiveMapModalProps> = ({
                   <button
                     key={s.id}
                     onClick={() => onSetWaypoint(s.x, s.z, s.name)}
+                    style={
+                      isSelected
+                        ? { borderColor: accentHex, backgroundColor: `${accentHex}1f` }
+                        : undefined
+                    }
                     className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-colors flex items-start gap-2 ${
                       isSelected
-                        ? 'bg-cyan-950/70 border-cyan-400/60 text-white'
+                        ? 'text-white'
                         : 'bg-slate-950/60 border-white/10 text-slate-200 hover:bg-slate-800'
                     }`}
                   >

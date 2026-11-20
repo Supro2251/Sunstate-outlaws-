@@ -333,27 +333,46 @@ export function createVehicleMesh(
     bodyGroup.add(pod);
     deformableMeshes.push(pod);
 
-    const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.92, 22, 16), glassMat);
-    canopy.scale.set(0.9, 0.68, 1.25);
-    canopy.position.set(0, 1.44, 1.25);
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.92, 24, 18), glassMat);
+    canopy.scale.set(0.9, 0.72, 1.32);
+    canopy.position.set(0, 1.44, 1.28);
     bodyGroup.add(canopy);
 
+    // Lower chin glass observation windows + pilot instrument console + dual seats
+    const chinGlass = new THREE.Mesh(new THREE.SphereGeometry(0.68, 16, 12), glassMat);
+    chinGlass.scale.set(0.95, 0.48, 0.9);
+    chinGlass.position.set(0, 0.96, 1.68);
+    const heliDash = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.32, 0.42), trimMat);
+    heliDash.position.set(0, 1.18, 1.45);
+    const pilotSeatL = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.34, 4, 8), interiorMat);
+    pilotSeatL.position.set(-0.28, 1.18, 0.85);
+    const pilotSeatR = pilotSeatL.clone();
+    pilotSeatR.position.x = 0.28;
+    bodyGroup.add(chinGlass, heliDash, pilotSeatL, pilotSeatR);
+
     const engineCowl = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.42, 1.25, 8, 16),
+      new THREE.CapsuleGeometry(0.42, 1.35, 8, 16),
       trimMat,
     );
     engineCowl.rotation.x = Math.PI / 2;
     engineCowl.position.set(0, 2.08, -0.35);
+    // Dual turbine exhausts
+    [-0.24, 0.24].forEach((ex) => {
+      const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.48, 12), rimMat);
+      exhaust.rotation.x = Math.PI / 2 + 0.12;
+      exhaust.position.set(ex, 2.04, -1.16);
+      bodyGroup.add(exhaust);
+    });
     bodyGroup.add(engineCowl);
 
-    const tailBoom = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.28, 3.8, 14), paintMat);
+    const tailBoom = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.3, 3.85, 16), paintMat);
     tailBoom.rotation.x = Math.PI / 2;
-    tailBoom.position.set(0, 1.54, -2.7);
+    tailBoom.position.set(0, 1.54, -2.72);
     const finShape = new THREE.Shape();
     finShape.moveTo(-0.35, 0);
     finShape.lineTo(0.45, 0);
-    finShape.lineTo(0.05, 1.3);
-    finShape.lineTo(-0.35, 1.18);
+    finShape.lineTo(0.05, 1.35);
+    finShape.lineTo(-0.35, 1.22);
     finShape.closePath();
     const tailFin = new THREE.Mesh(
       new THREE.ExtrudeGeometry(finShape, {
@@ -367,38 +386,53 @@ export function createVehicleMesh(
     );
     tailFin.rotation.y = Math.PI / 2;
     tailFin.position.set(-0.05, 1.48, -4.15);
-    const hStab = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 1.5, 4, 10), paintMat);
+    const hStab = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 1.55, 4, 10), paintMat);
     hStab.rotation.z = Math.PI / 2;
     hStab.scale.set(1, 1, 2.4);
     hStab.position.set(0, 1.56, -3.5);
-    bodyGroup.add(tailBoom, tailFin, hStab);
+    // Red/green navigation position lights on horizontal stabilizer tips
+    const navRed = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), taillightMat);
+    navRed.position.set(-0.85, 1.56, -3.5);
+    const navGreen = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0x22c55e }),
+    );
+    navGreen.position.set(0.85, 1.56, -3.5);
+    bodyGroup.add(tailBoom, tailFin, hStab, navRed, navGreen);
 
     [-0.95, 0.95].forEach((sx) => {
-      const skid = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 3.7, 6, 12), rimMat);
+      const skid = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 3.8, 6, 12), rimMat);
       skid.rotation.x = Math.PI / 2;
       skid.position.set(sx, 0.08, 0.2);
-      const strut1 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.78, 10), rimMat);
-      strut1.position.set(sx, 0.42, 1.0);
+      const strut1 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.045, 0.82, 10), rimMat);
+      strut1.rotation.z = sx > 0 ? 0.14 : -0.14;
+      strut1.position.set(sx * 0.92, 0.44, 1.0);
       const strut2 = strut1.clone();
       strut2.position.z = -0.7;
       bodyGroup.add(skid, strut1, strut2);
     });
 
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 0.34, 12), rimMat);
+    mast.position.set(0, 2.34, 0.2);
+    bodyGroup.add(mast);
+
     mainRotor = new THREE.Group();
-    mainRotor.position.set(0, 2.48, 0.2);
+    mainRotor.position.set(0, 2.52, 0.2);
     const hub = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 10), trimMat);
     hub.scale.set(1, 0.65, 1);
-    const bladeA = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 7.2, 4, 8), trimMat);
+    const swash = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12), rimMat);
+    swash.position.y = -0.1;
+    const bladeA = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 7.6, 4, 8), trimMat);
     bladeA.rotation.z = Math.PI / 2;
-    bladeA.scale.set(0.3, 1, 2.2);
+    bladeA.scale.set(0.28, 1, 2.4);
     const bladeB = bladeA.clone();
     bladeB.rotation.y = Math.PI / 2;
-    mainRotor.add(hub, bladeA, bladeB);
+    mainRotor.add(hub, swash, bladeA, bladeB);
     bodyGroup.add(mainRotor);
 
     tailRotor = new THREE.Group();
     tailRotor.position.set(0.2, 2.15, -4.25);
-    const tBlade1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 1.2, 4, 8), trimMat);
+    const tBlade1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 1.25, 4, 8), trimMat);
     const tBlade2 = tBlade1.clone();
     tBlade2.rotation.x = Math.PI / 2;
     tailRotor.add(tBlade1, tBlade2);
@@ -508,28 +542,56 @@ export function createVehicleMesh(
       });
       bodyGroup.add(finL, finR, noseCone);
     } else {
-      // Tapered Propeller Aircraft Wings & Rounded Spinner
-      const wingSpan = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.1, spec.width * 0.92, 6, 12),
-        paintMat,
+      // Tapered Swept Propeller Aircraft Airfoil Wings, Side Windows & Wingtip Nav Lights
+      const makePropWing = (side: number) => {
+        const wShape = new THREE.Shape();
+        wShape.moveTo(0, -0.85);
+        wShape.lineTo(0, 0.92);
+        wShape.lineTo(side * (spec.width * 0.46), 0.35);
+        wShape.lineTo(side * (spec.width * 0.46), -0.65);
+        wShape.closePath();
+        const wGeo = new THREE.ExtrudeGeometry(wShape, {
+          depth: 0.11,
+          bevelEnabled: true,
+          bevelSize: 0.04,
+          bevelThickness: 0.03,
+          bevelSegments: 2,
+        });
+        wGeo.rotateX(Math.PI / 2);
+        const wing = new THREE.Mesh(wGeo, paintMat);
+        wing.position.set(side * 0.48, 1.56, 0.42);
+        wing.castShadow = true;
+        return wing;
+      };
+      const wingL = makePropWing(-1);
+      const wingR = makePropWing(1);
+      const navRed = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), taillightMat);
+      navRed.position.set(-spec.width * 0.48, 1.54, 0.25);
+      const navGreen = new THREE.Mesh(
+        new THREE.SphereGeometry(0.07, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0x22c55e }),
       );
-      wingSpan.rotation.z = Math.PI / 2;
-      wingSpan.scale.set(1, 1, 7.5);
-      wingSpan.position.set(0, 1.5, 0.55);
-      const tailWing = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 2.8, 4, 10), paintMat);
+      navGreen.position.set(spec.width * 0.48, 1.54, 0.25);
+      const tailWing = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 2.9, 4, 10), paintMat);
       tailWing.rotation.z = Math.PI / 2;
       tailWing.scale.set(1, 1, 5.2);
       tailWing.position.set(0, 1.32, -spec.length * 0.39);
-      const tailFin = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 1.15, 4, 10), paintMat);
+      const tailFin = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 1.2, 4, 10), paintMat);
       tailFin.scale.set(0.8, 1, 5.0);
       tailFin.position.set(0, 1.9, -spec.length * 0.39);
-      bodyGroup.add(wingSpan, tailWing, tailFin);
+      // Side fuselage cabin windows
+      [-0.68, 0.68].forEach((wx) => {
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.28, 1.45), glassMat);
+        win.position.set(wx, 1.38, -0.35);
+        bodyGroup.add(win);
+      });
+      bodyGroup.add(wingL, wingR, navRed, navGreen, tailWing, tailFin);
 
       propeller = new THREE.Group();
       propeller.position.set(0, 1.22, spec.length * 0.47);
       const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.48, 16), rimMat);
       spinner.rotation.x = Math.PI / 2;
-      const p1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 2.4, 4, 8), trimMat);
+      const p1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 2.45, 4, 8), trimMat);
       p1.rotation.z = Math.PI / 2;
       const p2 = p1.clone();
       p2.rotation.z = 0;
@@ -991,28 +1053,64 @@ export function createCharacterMesh(
   const shoeMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.65 });
   const metalMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.88, roughness: 0.22 });
 
-  // Sculpted Smooth Capsule Torso + Pelvis + Integrated Shirt Collar
+  // Sculpted Athletic Anatomical Torso (Broad Chest -> Tapered Waist, Pelvis, Belt & Lapels)
   const torso = new THREE.Mesh(
-    new THREE.CapsuleGeometry(isFemale ? 0.205 : 0.23, 0.31, 8, 18),
+    new THREE.CylinderGeometry(isFemale ? 0.21 : 0.245, isFemale ? 0.165 : 0.19, 0.46, 18),
     jacketMat,
   );
-  torso.scale.set(1.16, 1, 0.72);
-  torso.position.y = 1.15;
+  torso.scale.set(1.22, 1, 0.72);
+  torso.position.y = 1.16;
   torso.castShadow = true;
   group.add(torso);
 
-  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(isFemale ? 0.19 : 0.21, 14, 10), pantsMat);
-  pelvis.scale.set(1.08, 0.72, 0.76);
-  pelvis.position.y = 0.86;
+  const shouldersCap = new THREE.Mesh(
+    new THREE.SphereGeometry(isFemale ? 0.195 : 0.225, 16, 10),
+    jacketMat,
+  );
+  shouldersCap.scale.set(1.26, 0.56, 0.74);
+  shouldersCap.position.y = 1.36;
+  shouldersCap.castShadow = true;
+  group.add(shouldersCap);
+
+  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(isFemale ? 0.185 : 0.195, 16, 12), pantsMat);
+  pelvis.scale.set(1.12, 0.76, 0.76);
+  pelvis.position.y = 0.88;
   group.add(pelvis);
 
+  const belt = new THREE.Mesh(
+    new THREE.CylinderGeometry(isFemale ? 0.172 : 0.196, isFemale ? 0.174 : 0.198, 0.055, 18),
+    shoeMat,
+  );
+  belt.scale.set(1.18, 1, 0.74);
+  belt.position.y = 0.94;
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.025), metalMat);
+  buckle.position.set(0, 0.94, 0.145);
+  group.add(belt, buckle);
+
   const shirtStripe = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.085, 0.34, 6, 12),
+    new THREE.CylinderGeometry(0.088, 0.058, 0.36, 14),
     shirtMat,
   );
-  shirtStripe.scale.set(1.0, 1, 0.65);
-  shirtStripe.position.set(0, 0.02, 0.12);
+  shirtStripe.scale.set(1.05, 1, 0.62);
+  shirtStripe.position.set(0, 0.04, 0.125);
   torso.add(shirtStripe);
+
+  if (profile.id === 'kairo') {
+    // Signature DJ Studio Neck Headphones around collar
+    const hpBand = new THREE.Mesh(
+      new THREE.TorusGeometry(0.14, 0.018, 8, 18, Math.PI * 1.25),
+      metalMat,
+    );
+    hpBand.rotation.x = Math.PI * 0.42;
+    hpBand.rotation.z = -Math.PI * 0.12;
+    hpBand.position.set(0, 1.44, 0.03);
+    const cupL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.035, 12), shadesMat);
+    cupL.rotation.z = Math.PI / 2;
+    cupL.position.set(-0.14, 1.38, 0.12);
+    const cupR = cupL.clone();
+    cupR.position.x = 0.14;
+    group.add(hpBand, cupL, cupR);
+  }
 
   const parachutePack = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.14, 0.26, 6, 10),
@@ -1161,23 +1259,29 @@ export function createCharacterMesh(
   Object.values(beardVariants).forEach((b) => headGroup.add(b));
   group.add(headGroup);
 
-  // Smooth Rounded Capsule Legs & Sneakers
+  // Anatomical Tapered Thigh + Knee + Calf Legs & Detailed Sneakers
+  const soleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.75 });
   const makeLeg = (x: number) => {
     const legPivot = new THREE.Group();
-    legPivot.position.set(x, 0.84, 0);
-    const legMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.092, 0.56, 6, 14), pantsMat);
-    legMesh.position.y = -0.37;
-    legMesh.castShadow = true;
-    const shoe = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.13, 6, 12), shoeMat);
-    shoe.rotation.x = Math.PI / 2;
-    shoe.scale.set(1.1, 1, 0.72);
-    shoe.position.set(0, -0.77, 0.045);
-    legPivot.add(legMesh, shoe);
+    legPivot.position.set(x, 0.86, 0);
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.076, 0.38, 14), pantsMat);
+    thigh.position.y = -0.2;
+    thigh.castShadow = true;
+    const calf = new THREE.Mesh(new THREE.CylinderGeometry(0.074, 0.056, 0.38, 14), pantsMat);
+    calf.position.y = -0.57;
+    calf.castShadow = true;
+    const shoeUpper = new THREE.Mesh(new THREE.CapsuleGeometry(0.062, 0.12, 6, 12), shoeMat);
+    shoeUpper.rotation.x = Math.PI / 2;
+    shoeUpper.scale.set(1.08, 1, 0.66);
+    shoeUpper.position.set(0, -0.78, 0.045);
+    const shoeSole = new THREE.Mesh(new THREE.BoxGeometry(0.135, 0.032, 0.26), soleMat);
+    shoeSole.position.set(0, -0.825, 0.045);
+    legPivot.add(thigh, calf, shoeUpper, shoeSole);
     group.add(legPivot);
     return legPivot;
   };
-  const leftLeg = makeLeg(-0.13);
-  const rightLeg = makeLeg(0.13);
+  const leftLeg = makeLeg(-0.115);
+  const rightLeg = makeLeg(0.115);
 
   // Smooth Rounded Articulated 2-Segment Arms (Shoulder Ball + Capsule Sleeve + Forearm + Hand)
   const makeArm = (x: number): { shoulder: THREE.Group; elbow: THREE.Group } => {

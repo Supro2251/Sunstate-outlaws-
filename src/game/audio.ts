@@ -34,13 +34,13 @@ export class SoundEngine {
         data[i] = Math.random() * 2 - 1;
       }
 
-      // Continuous engine hum
+      // Warm soft engine oscillator (strictly silent at idle / on foot — zero background buzz!)
       this.engineOsc = this.ctx.createOscillator();
-      this.engineOsc.type = 'sawtooth';
-      this.engineOsc.frequency.value = 55;
+      this.engineOsc.type = 'triangle';
+      this.engineOsc.frequency.value = 64;
       this.engineFilter = this.ctx.createBiquadFilter();
       this.engineFilter.type = 'lowpass';
-      this.engineFilter.frequency.value = 180;
+      this.engineFilter.frequency.value = 140;
       this.engineGain = this.ctx.createGain();
       this.engineGain.gain.value = 0;
       this.engineOsc.connect(this.engineFilter);
@@ -48,9 +48,9 @@ export class SoundEngine {
       this.engineGain.connect(this.masterGain);
       this.engineOsc.start();
 
-      // Continuous police siren oscillator
+      // Continuous police siren oscillator (muted until siren active)
       this.sirenOsc = this.ctx.createOscillator();
-      this.sirenOsc.type = 'triangle';
+      this.sirenOsc.type = 'sine';
       this.sirenOsc.frequency.value = 660;
       this.sirenGain = this.ctx.createGain();
       this.sirenGain.gain.value = 0;
@@ -58,7 +58,7 @@ export class SoundEngine {
       this.sirenGain.connect(this.masterGain);
       this.sirenOsc.start();
 
-      // Tire screech loop
+      // Tire screech loop (muted unless actively drifting fast)
       this.screechSource = this.ctx.createBufferSource();
       this.screechSource.buffer = this.noiseBuffer;
       this.screechSource.loop = true;
@@ -101,23 +101,24 @@ export class SoundEngine {
       return;
     }
     const now = this.ctx.currentTime;
-    if (inVehicle) {
-      const targetFreq = 48 + speedNorm * 125;
-      this.engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.08);
-      this.engineFilter.frequency.setTargetAtTime(160 + speedNorm * 420, now, 0.08);
-      this.engineGain.gain.setTargetAtTime(0.08 + speedNorm * 0.09, now, 0.08);
-      this.screechGain.gain.setTargetAtTime(drifting ? 0.14 : 0, now, 0.05);
+    const moving = inVehicle && !this.muted && speedNorm > 0.035;
+    if (moving) {
+      const targetFreq = 62 + speedNorm * 115;
+      this.engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.09);
+      this.engineFilter.frequency.setTargetAtTime(140 + speedNorm * 320, now, 0.09);
+      this.engineGain.gain.setTargetAtTime(Math.min(0.085, 0.018 + speedNorm * 0.065), now, 0.09);
+      this.screechGain.gain.setTargetAtTime(drifting && speedNorm > 0.25 ? 0.11 : 0, now, 0.06);
     } else {
-      this.engineGain.gain.setTargetAtTime(0, now, 0.08);
+      this.engineGain.gain.setTargetAtTime(0, now, 0.06);
       this.screechGain.gain.setTargetAtTime(0, now, 0.05);
     }
 
-    if (sirenStrength > 0.01) {
-      const wail = 620 + Math.sin(elapsed * 5.4) * 240;
+    if (!this.muted && sirenStrength > 0.05) {
+      const wail = 620 + Math.sin(elapsed * 5.4) * 220;
       this.sirenOsc.frequency.setTargetAtTime(wail, now, 0.04);
-      this.sirenGain.gain.setTargetAtTime(0.055 * sirenStrength, now, 0.08);
+      this.sirenGain.gain.setTargetAtTime(0.045 * sirenStrength, now, 0.08);
     } else {
-      this.sirenGain.gain.setTargetAtTime(0, now, 0.08);
+      this.sirenGain.gain.setTargetAtTime(0, now, 0.06);
     }
   }
 

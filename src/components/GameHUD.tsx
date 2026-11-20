@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Award,
   Bot,
   Camera,
   Car,
@@ -11,9 +12,11 @@ import {
   CloudFog,
   CloudLightning,
   CloudRain,
+  Compass,
   Crosshair,
   Flag,
   HelpCircle,
+  Home,
   Map as MapIcon,
   MessageSquare,
   Phone,
@@ -70,6 +73,7 @@ interface GameHUDProps {
   onHealAndRepair: () => void;
   onToggleMute: () => void;
   onStartStoryMission: (id: string) => void;
+  onStartHiddenMission: (id: string) => void;
   onSendCoopInvite: (friendHandle: string, missionId: string) => void;
   onRespondCoopInvite: (accept: boolean) => void;
   onCancelMission: () => void;
@@ -79,6 +83,7 @@ interface GameHUDProps {
 }
 
 type DockTab = 'vehicles' | 'missions' | 'world' | 'radio';
+type MissionSubTab = 'story' | 'random';
 
 export const GameHUD: React.FC<GameHUDProps> = ({
   hud,
@@ -103,6 +108,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onHealAndRepair,
   onToggleMute,
   onStartStoryMission,
+  onStartHiddenMission,
   onSendCoopInvite,
   onRespondCoopInvite,
   onCancelMission,
@@ -112,6 +118,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 }) => {
   const [dockOpen, setDockOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<DockTab>('vehicles');
+  const [missionSubTab, setMissionSubTab] = useState<MissionSubTab>('story');
+
+  const theme = hud.characterTheme;
 
   const formatClock = (hour: number) => {
     const h = Math.floor(hour) % 24;
@@ -159,17 +168,27 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     return <CloudFog className="w-3.5 h-3.5 text-slate-400" />;
   };
 
+  const discoveredRandomMissions = HIDDEN_MISSIONS.filter((hm) =>
+    hud.discoveredHiddenIds.includes(hm.id),
+  );
+
   const isCutscene = hud.cutscene.active;
 
   return (
     <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-4">
-      {/* Top Row: Radar (Left) + Mission/Co-op/Toast (Center) + Stats (Right) */}
+      {/* Top Row: Radar (Left) + Mission/Co-op/Toast (Center) + Character Stats (Right) */}
       {!isCutscene && (
         <div className="flex items-start justify-between gap-4">
           {/* Top-Left: Title + Quick Action Bar + Interactive Radar */}
           <div className="pointer-events-auto flex flex-col gap-1.5">
-            <div className="px-2.5 py-1.5 rounded bg-slate-950/90 border border-white/10 flex items-center gap-2">
-              <span className="font-display text-xs font-bold tracking-wider text-white">
+            <div
+              className="px-2.5 py-1.5 rounded bg-slate-950/92 border flex items-center gap-2"
+              style={{ borderColor: `${theme.accentHex}44` }}
+            >
+              <span
+                className="font-display text-xs font-bold tracking-wider"
+                style={{ color: theme.accentHex }}
+              >
                 SUNSTATE OUTLAWS
               </span>
               <span className="font-mono-num text-[11px] text-emerald-400">
@@ -209,7 +228,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <button
                 onClick={onOpenSettings}
                 className="text-purple-300 hover:text-purple-200 transition-colors"
-                title="Nastavenia & Priatelia (O)"
+                title="Nastavenia, Ovládač & Priatelia (O)"
               >
                 <Settings className="w-4 h-4" />
               </button>
@@ -221,6 +240,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <HelpCircle className="w-4 h-4" />
               </button>
             </div>
+
             <Minimap
               playerX={hud.playerX}
               playerZ={hud.playerZ}
@@ -232,12 +252,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               gpsTarget={hud.gpsTarget}
               gpsDistance={hud.gpsDistance}
               gpsTurnHint={hud.gpsTurnHint}
+              accentHex={theme.accentHex}
               onOpenMap={onOpenMap}
             />
 
             {/* Live AI Director & Adaptive NPC Feed */}
-            <div className="w-[244px] rounded bg-slate-950/90 border border-white/10 p-2 space-y-1.5 text-[10px]">
-              <div className="flex items-center justify-between gap-1 text-cyan-300 font-semibold">
+            <div
+              className="w-[244px] rounded bg-slate-950/92 border p-2 space-y-1.5 text-[10px]"
+              style={{ borderColor: `${theme.accentHex}38` }}
+            >
+              <div
+                className="flex items-center justify-between gap-1 font-semibold"
+                style={{ color: theme.accentHex }}
+              >
                 <span className="flex items-center gap-1">
                   <Bot className="w-3 h-3" /> Palmetto AI Dispečing
                 </span>
@@ -286,12 +313,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           {/* Top-Center: Active Mission + Co-op Invite + Toast */}
           <div className="flex flex-col items-center gap-2 max-w-md text-center">
             {hud.mission.activeId && (
-              <div className="pointer-events-auto px-4 py-2 rounded-md bg-slate-950/92 border border-amber-400/45 shadow-lg flex items-center gap-3">
+              <div
+                className="pointer-events-auto px-4 py-2 rounded-md bg-slate-950/92 border shadow-lg flex items-center gap-3"
+                style={{ borderColor: `${theme.accentHex}70` }}
+              >
                 <div className="text-left">
                   <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-amber-400">
                     <span>{hud.mission.title}</span>
                     <span>·</span>
-                    <span className="text-cyan-300">
+                    <span style={{ color: theme.accentHex }}>
                       Krok {hud.mission.stageIndex + 1}/{hud.mission.totalStages}
                     </span>
                     <span>·</span>
@@ -354,17 +384,41 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             )}
           </div>
 
-          {/* Top-Right: Character, Skills, Wanted, Health/Armor, Cash, Weapon/Vehicle */}
-          <div className="pointer-events-auto w-72 rounded-md bg-slate-950/92 border border-white/12 p-3 flex flex-col gap-2 shadow-lg">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5">
-                <span className="font-display font-semibold text-white">{hud.characterName}</span>
-                {hud.godMode && (
-                  <span className="text-[10px] font-bold text-emerald-400">GOD</span>
-                )}
+          {/* Top-Right: Adaptive Character Identity, Reputation, Home, Skills, Wanted, Health/Armor, Cash */}
+          <div
+            className="pointer-events-auto w-76 rounded-md bg-slate-950/92 border p-3 flex flex-col gap-2 shadow-lg"
+            style={{
+              borderColor: `${theme.accentHex}55`,
+              borderTop: `3px solid ${theme.accentHex}`,
+            }}
+          >
+            <div className="flex items-start justify-between gap-2 text-xs">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-display font-semibold text-white">{hud.characterName}</span>
+                  {hud.godMode && (
+                    <span className="text-[10px] font-bold text-emerald-400">GOD</span>
+                  )}
+                </div>
+                <div className="text-[10px] font-medium" style={{ color: theme.accentHex }}>
+                  {hud.characterRole}
+                </div>
               </div>
-              <span className="text-[11px] text-slate-400">
+              <span className="text-[10px] text-slate-400">
                 {hud.cameraMode === 'first' ? '1st Person' : '3rd Person'}
+              </span>
+            </div>
+
+            {/* Reputation & Home Bar */}
+            <div className="px-2 py-1 rounded bg-slate-900/90 border border-white/10 flex items-center justify-between gap-2 text-[10px]">
+              <span className="flex items-center gap-1 text-amber-300 font-semibold truncate">
+                <Award className="w-3 h-3 shrink-0" />
+                <span className="truncate">{hud.reputationRank}</span>
+                <span className="font-mono-num text-slate-400">({hud.reputation} RP)</span>
+              </span>
+              <span className="flex items-center gap-1 text-slate-300 truncate shrink-0">
+                <Home className="w-3 h-3 shrink-0" style={{ color: theme.accentHex }} />
+                <span className="truncate max-w-[96px]">{hud.characterHomeName.split(' (')[0]}</span>
               </span>
             </div>
 
@@ -467,7 +521,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {hud.inVehicle ? (
               <div className="pt-1.5 border-t border-white/10 flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-semibold text-amber-300">{hud.vehicleName}</div>
+                  <div className="text-xs font-semibold" style={{ color: theme.accentHex }}>
+                    {hud.vehicleName}
+                  </div>
                   <div className="text-[11px] text-slate-400 flex items-center gap-2">
                     <span>Karoséria {hud.vehicleHealth}%</span>
                     {(hud.vehicleKind === 'helicopter' || hud.vehicleKind === 'plane') && (
@@ -495,16 +551,22 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <div className="flex items-center justify-between gap-1">
                   {(['fists', 'pistol', 'smg'] as WeaponId[]).map((wId, i) => {
                     const unlocked = hud.unlockedWeapons[wId];
+                    const isSelected = hud.weaponId === wId;
                     return (
                       <button
                         key={wId}
                         disabled={!unlocked}
                         onClick={() => onSetWeapon(wId)}
+                        style={
+                          unlocked && isSelected
+                            ? { backgroundColor: theme.accentHex, color: '#020617' }
+                            : undefined
+                        }
                         className={`flex-1 py-1 px-1.5 rounded text-[11px] font-medium whitespace-nowrap transition-colors ${
                           !unlocked
                             ? 'bg-slate-900/40 text-slate-600 cursor-not-allowed'
-                            : hud.weaponId === wId
-                              ? 'bg-amber-500 text-slate-950 font-semibold'
+                            : isSelected
+                              ? 'font-semibold'
                               : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                         }`}
                       >
@@ -513,7 +575,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     );
                   })}
                   {hud.weaponId !== 'fists' && (
-                    <span className="font-mono-num text-xs text-amber-300 pl-1">
+                    <span
+                      className="font-mono-num text-xs pl-1 font-semibold"
+                      style={{ color: theme.accentHex }}
+                    >
                       {hud.ammo[hud.weaponId]}
                     </span>
                   )}
@@ -564,7 +629,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
           <div className="bg-slate-950 border-t border-white/10 px-6 py-5 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="max-w-3xl">
-              <div className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-1">
+              <div
+                className="text-xs font-bold uppercase tracking-wider mb-1"
+                style={{ color: theme.accentHex }}
+              >
                 {hud.cutscene.speaker}
               </div>
               <div className="text-base text-white">{hud.cutscene.text}</div>
@@ -572,7 +640,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={onAdvanceCutscene}
-                className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold"
+                style={{ backgroundColor: theme.accentHex }}
+                className="px-4 py-2 rounded text-slate-950 text-xs font-bold hover:brightness-110"
               >
                 Pokračovať (Space)
               </button>
@@ -587,18 +656,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
       )}
 
-      {/* Bottom Prompt + Collapsible Dock */}
+      {/* Bottom Prompt + Random Mission Action + Collapsible Dock */}
       {!isCutscene && (
         <div className="flex flex-col items-center gap-2">
-          {hud.promptText && (
-            <div className="pointer-events-auto flex items-center gap-2">
-              <div className="px-4 py-1.5 rounded bg-slate-950/92 border border-amber-400/45 text-xs font-medium text-amber-200 shadow">
-                {hud.promptText}
-              </div>
+          {(hud.promptText || (hud.nearbyHiddenMission && !hud.mission.activeId)) && (
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+              {hud.promptText && (
+                <div className="px-4 py-1.5 rounded bg-slate-950/92 border border-amber-400/45 text-xs font-medium text-amber-200 shadow">
+                  {hud.promptText}
+                </div>
+              )}
+              {hud.nearbyHiddenMission && !hud.mission.activeId && (
+                <button
+                  onClick={() => onStartHiddenMission(hud.nearbyHiddenMission!.id)}
+                  className="px-3.5 py-1.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold shadow flex items-center gap-1.5"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  Spustiť náhodnú misiu: {hud.nearbyHiddenMission.title} (+${hud.nearbyHiddenMission.reward}) [E]
+                </button>
+              )}
               {hud.nearbyShop && (
                 <button
                   onClick={onOpenNearbyShop}
-                  className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow"
+                  style={{ backgroundColor: theme.accentHex }}
+                  className="px-3 py-1.5 rounded text-slate-950 text-xs font-bold shadow hover:brightness-110"
                 >
                   Otvoriť menu
                 </button>
@@ -614,25 +695,36 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
           )}
 
-          <div className="pointer-events-auto flex flex-col items-center w-full max-w-[960px]">
+          <div className="pointer-events-auto flex flex-col items-center w-full max-w-[980px]">
             <button
               onClick={() => setDockOpen((v) => !v)}
-              className="px-3.5 py-1 rounded-t-md bg-slate-950/92 border border-b-0 border-white/15 text-[11px] font-medium text-slate-300 hover:text-white flex items-center gap-2"
+              style={{ borderColor: `${theme.accentHex}44` }}
+              className="px-3.5 py-1 rounded-t-md bg-slate-950/92 border border-b-0 text-[11px] font-medium text-slate-300 hover:text-white flex items-center gap-2"
             >
               {dockOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-              <span>{dockOpen ? 'Skryť lištu ovládania' : 'Zobraziť lištu ovládania'}</span>
-              <span className="font-mono-num text-amber-300">· Čas: {formatClock(hud.timeHour)}</span>
+              <span>{dockOpen ? 'Skryť menu' : 'Otvoriť menu'}</span>
+              <span className="font-mono-num" style={{ color: theme.accentHex }}>
+                · {hud.characterName.split(' ')[0]} · {formatClock(hud.timeHour)}
+              </span>
             </button>
 
             {dockOpen && (
-              <div className="w-full rounded-md rounded-t-none bg-slate-950/94 border border-white/15 p-2.5 shadow-xl flex flex-col gap-2">
+              <div
+                className="w-full rounded-md rounded-t-none bg-slate-950/94 border p-2.5 shadow-xl flex flex-col gap-2"
+                style={{ borderColor: `${theme.accentHex}44` }}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
                   <div className="flex flex-wrap items-center gap-1">
                     <button
                       onClick={() => setActiveTab('vehicles')}
+                      style={
+                        activeTab === 'vehicles'
+                          ? { backgroundColor: theme.accentHex, color: '#020617' }
+                          : undefined
+                      }
                       className={`px-2.5 py-1 rounded text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
                         activeTab === 'vehicles'
-                          ? 'bg-sky-500 text-slate-950 font-semibold'
+                          ? 'font-semibold'
                           : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                       }`}
                     >
@@ -726,62 +818,129 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
                 {activeTab === 'missions' && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[11px] text-slate-300">
-                      <span>
-                        Príbehové misie s cutscénami (5 – 30 min, stupňujúca sa náročnosť)
-                      </span>
-                      <span className="text-amber-300 font-semibold">
-                        Objavené tajné misie: {hud.completedHiddenIds.length} / {HIDDEN_MISSIONS.length}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setMissionSubTab('story')}
+                          className={`px-2.5 py-1 rounded font-semibold ${
+                            missionSubTab === 'story'
+                              ? 'bg-amber-400 text-slate-950'
+                              : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
+                          }`}
+                        >
+                          Príbehové misie ({hud.completedStoryIds.length}/20)
+                        </button>
+                        <button
+                          onClick={() => setMissionSubTab('random')}
+                          className={`px-2.5 py-1 rounded font-semibold ${
+                            missionSubTab === 'random'
+                              ? 'bg-cyan-400 text-slate-950'
+                              : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
+                          }`}
+                        >
+                          Náhodné misie ({hud.discoveredHiddenIds.length}/{HIDDEN_MISSIONS.length})
+                        </button>
+                      </div>
+                      <span className="text-slate-400">
+                        Dokončené náhodné: {hud.completedHiddenIds.length} / {HIDDEN_MISSIONS.length}
                       </span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
-                      {STORY_MISSIONS.map((m) => {
-                        const done = hud.completedStoryIds.includes(m.id);
-                        const isActive = hud.mission.activeId === m.id;
-                        return (
-                          <div
-                            key={m.id}
-                            className={`p-2 rounded border flex items-center justify-between gap-2 text-xs ${
-                              isActive
-                                ? 'bg-amber-950/60 border-amber-400/50'
-                                : done
-                                  ? 'bg-emerald-950/35 border-emerald-500/30'
-                                  : 'bg-slate-900/90 border-white/10'
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <div className="font-semibold text-white truncate flex items-center gap-1.5">
-                                {done && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                                <span className="truncate">{m.title}</span>
+
+                    {missionSubTab === 'story' ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                        {STORY_MISSIONS.map((m) => {
+                          const done = hud.completedStoryIds.includes(m.id);
+                          const isActive = hud.mission.activeId === m.id;
+                          return (
+                            <div
+                              key={m.id}
+                              className={`p-2 rounded border flex items-center justify-between gap-2 text-xs ${
+                                isActive
+                                  ? 'bg-amber-950/60 border-amber-400/50'
+                                  : done
+                                    ? 'bg-emerald-950/35 border-emerald-500/30'
+                                    : 'bg-slate-900/90 border-white/10'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                                  {done && (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  )}
+                                  <span className="truncate">{m.title}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                                  <span className="text-amber-300">{'★'.repeat(m.difficulty)}</span>
+                                  <span>{m.durationLabel}</span>
+                                  <span className="text-emerald-400 font-mono-num">+${m.reward}</span>
+                                </div>
                               </div>
-                              <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                                <span className="text-amber-300">{'★'.repeat(m.difficulty)}</span>
-                                <span>{m.durationLabel}</span>
-                                <span className="text-emerald-400 font-mono-num">+${m.reward}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={() => onStartStoryMission(m.id)}
-                                className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold"
-                              >
-                                {isActive ? 'Beží' : 'Spustiť'}
-                              </button>
-                              {hud.onlineFriends.map((friend) => (
+                              <div className="flex items-center gap-1 shrink-0">
                                 <button
-                                  key={friend.id}
-                                  onClick={() => onSendCoopInvite(friend.handle, m.id)}
-                                  className="px-2 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
-                                  title={`Zahrať misiu s kamarátom ${friend.handle}`}
+                                  onClick={() => onStartStoryMission(m.id)}
+                                  className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold"
                                 >
-                                  <Users className="w-3 h-3" /> {friend.handle}
+                                  {isActive ? 'Beží' : 'Spustiť'}
                                 </button>
-                              ))}
+                                {hud.onlineFriends.map((friend) => (
+                                  <button
+                                    key={friend.id}
+                                    onClick={() => onSendCoopInvite(friend.handle, m.id)}
+                                    className="px-2 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
+                                    title={`Zahrať misiu s kamarátom ${friend.handle}`}
+                                  >
+                                    <Users className="w-3 h-3" /> {friend.handle}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    ) : discoveredRandomMissions.length === 0 ? (
+                      <div className="p-3 rounded bg-slate-900/80 border border-white/10 text-xs text-slate-300">
+                        Zatiaľ si neobjavil žiadnu náhodnú misiu. Preskúmaj Palmetto Bay, parky, móla, letiská a strechy — akonáhle na miesto dorazíš, misia sa tu odomkne a budeš ju môcť kedykoľvek spustiť.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                        {discoveredRandomMissions.map((hm) => {
+                          const done = hud.completedHiddenIds.includes(hm.id);
+                          const isActive = hud.mission.activeId === hm.id;
+                          return (
+                            <div
+                              key={hm.id}
+                              className={`p-2 rounded border flex items-center justify-between gap-2 text-xs ${
+                                isActive
+                                  ? 'bg-cyan-950/60 border-cyan-400/50'
+                                  : done
+                                    ? 'bg-emerald-950/35 border-emerald-500/30'
+                                    : 'bg-slate-900/90 border-white/10'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                                  {done && (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  )}
+                                  <span className="truncate">{hm.title}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                                  <span>{hm.district}</span>
+                                  <span className="text-emerald-400 font-mono-num">+${hm.reward}</span>
+                                  {done && <span className="text-emerald-300">Dokončená</span>}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => onStartHiddenMission(hm.id)}
+                                className="px-2.5 py-1 rounded bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-[11px] font-bold shrink-0"
+                              >
+                                {isActive ? 'Beží' : done ? 'Opakovať' : 'Spustiť'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -839,7 +998,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                               : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                           }`}
                         >
-                          Auto počasie
+                          Auto počasie (plynulé)
                         </button>
                       </div>
                     </div>
@@ -862,18 +1021,24 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                         ))}
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <User className="w-3.5 h-3.5 text-slate-400" />
-                        {(['dante', 'elena'] as CharacterId[]).map((cId) => {
+                        {(['dante', 'elena', 'kairo'] as CharacterId[]).map((cId) => {
                           const char = CHARACTERS[cId];
+                          const isCurrent = hud.characterId === cId;
                           return (
                             <button
                               key={cId}
                               onClick={() => onSetCharacter(cId)}
-                              title={`${char.strengthNote} / ${char.weaknessNote}`}
+                              title={`${char.role} · Dom: ${char.homeName}`}
+                              style={
+                                isCurrent
+                                  ? { backgroundColor: char.uiTheme.accentHex, color: '#020617' }
+                                  : undefined
+                              }
                               className={`px-2 py-1 rounded text-xs whitespace-nowrap ${
-                                hud.characterId === cId
-                                  ? 'bg-emerald-400 text-slate-950 font-semibold'
+                                isCurrent
+                                  ? 'font-semibold'
                                   : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                               }`}
                             >
@@ -891,7 +1056,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                           onClick={onOpenSettings}
                           className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs text-cyan-300"
                         >
-                          Priatelia & Nastavenia
+                          Ovládač & Nastavenia
                         </button>
                       </div>
                     </div>
@@ -946,18 +1111,18 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <div className="space-y-1.5">
                 <div className="font-semibold text-amber-400 mb-1">Chôdza, Boj & Padák</div>
                 <div>WASD / Ľavá páčka · Pohyb postavy</div>
-                <div>Shift / A (×) · Šprint · Space / X (□) · Skok / Padák</div>
-                <div>Klik / RT · Zameriavanie & Streľba · 1/2/3 alebo D-Pad → · Zbraň</div>
-                <div>E / Y (△) · Výťahy v budovách, obchody a vozidlá</div>
-                <div>V / Select · Prepnutie kamery 1st / 3rd Person</div>
+                <div>Shift / × (A) · Šprint · Space / □ (X) · Skok / Padák</div>
+                <div>Klik / R2 (RT) · Streľba · 1/2/3 alebo D-Pad → · Zbraň</div>
+                <div>E / △ (Y) · Vstup do budov, výťahy, vozidlá a štart náhodnej misie</div>
+                <div>V / Touchpad / Share · Kamera 1st / 3rd Person</div>
               </div>
               <div className="space-y-1.5">
-                <div className="font-semibold text-sky-400 mb-1">Autá, Lietadlá & Ovládač (GTA V)</div>
-                <div>W / RT · Plyn · S / LT · Brzda (Vrtuľník: Stúpanie / Klesanie)</div>
-                <div>Space / RB · Ručná brzda · LB / Klik · Vodné delo / Stíhačka kanón</div>
+                <div className="font-semibold text-sky-400 mb-1">Autá, Vrtuľníky, Lietadlá & PS4/PS5</div>
+                <div>W / R2 · Plyn · S / L2 · Brzda (Vrtuľník: Stúpanie / Klesanie)</div>
+                <div>Space / R1 · Ručná brzda · L1 / Klik · Vodné delo / Stíhačka kanón</div>
                 <div>Lietadlo / Stíhačka: Páčka dole (K) = Nos hore & Stúpanie</div>
                 <div>Lietadlo / Stíhačka: Páčka hore (I) = Nos dole & Klesanie</div>
-                <div>O · Nastavenia & vlastné mapovanie klávesov pre každé vozidlo</div>
+                <div>O · Mapovanie klávesov a tlačidiel pre každé vozidlo zvlášť</div>
               </div>
             </div>
 
@@ -966,7 +1131,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <span className="text-emerald-300 font-semibold">Mobil & AI (T / D-Pad ↑):</span> Zavolaj záchranné zložky, využi Palmetto AI asistenta, vygeneruj si vlastnú AI misiu alebo rozprávaj s NPC klávesou G!
               </div>
               <div>
-                <span className="text-cyan-300 font-semibold">Veľké haly & Výťahy:</span> Vojdi do nemocnice, hasičskej stanice, obchodov či Apex Trust (výťah až na mrakodrap), a do Apex Customs vojdi autom na zdvihák.
+                <span className="text-cyan-300 font-semibold">3 Postavy & Budovy:</span> Prepínaj medzi Dantem, Elenou a Kairom. Každý má vlastný dom, peniaze, reputáciu a farebnú tému rozhrania.
               </div>
             </div>
           </div>

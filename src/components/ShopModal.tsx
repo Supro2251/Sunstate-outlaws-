@@ -32,6 +32,13 @@ interface ShopModalProps {
   onBankAction: (action: 'deposit' | 'withdraw' | 'heist_job', amount?: number) => void;
   onDealershipVehicle: (type: VehicleTypeId, purchase: boolean) => void;
   onSafehouseAction: (action: 'rest' | 'save' | 'time', preset?: TimePreset) => void;
+  onBuyService: (
+    itemName: string,
+    cost: number,
+    heal: number,
+    repDelta: number,
+    clearWanted?: boolean,
+  ) => void;
 }
 
 export const ShopModal: React.FC<ShopModalProps> = ({
@@ -45,10 +52,16 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   onBankAction,
   onDealershipVehicle,
   onSafehouseAction,
+  onBuyService,
 }) => {
+  const accentHex = hud.characterTheme.accentHex;
+
   return (
     <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-slate-950/78 p-4">
-      <div className="w-full max-w-xl rounded-lg bg-slate-900 border border-white/15 shadow-2xl overflow-hidden">
+      <div
+        className="w-full max-w-xl rounded-lg bg-slate-900 border shadow-2xl overflow-hidden"
+        style={{ borderColor: `${accentHex}55` }}
+      >
         <div
           className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between"
           style={{ borderTop: `3px solid ${shop.color}` }}
@@ -89,6 +102,105 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     <div className="text-slate-400">{item.desc}</div>
                   </div>
                   <span className="font-mono-num text-emerald-400 font-bold">${item.cost}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {shop.category === 'cafe' && (
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                { name: 'Palmetto Espresso', cost: 18, heal: 25, rep: 5, desc: '+25 Zdravie · +5 RP' },
+                { name: 'Ľadové Matcha Latté', cost: 28, heal: 40, rep: 8, desc: '+40 Zdravie · +8 RP' },
+                { name: 'Karamelový Croissant & Káva', cost: 45, heal: 65, rep: 12, desc: '+65 Zdravie · +12 RP' },
+                { name: 'Špeciál pražiarne pre tím', cost: 80, heal: 100, rep: 20, desc: 'Plné zdravie · +20 RP' },
+              ].map((item) => (
+                <button
+                  key={item.name}
+                  onClick={() => onBuyService(item.name, item.cost, item.heal, item.rep, false)}
+                  className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-semibold text-white">{item.name}</div>
+                    <div className="text-slate-400">{item.desc}</div>
+                  </div>
+                  <span className="font-mono-num text-amber-400 font-bold">${item.cost}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {shop.category === 'club' && (
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                { name: 'Neónový koktail', cost: 35, heal: 30, rep: 15, desc: '+30 HP · +15 Reputácia' },
+                { name: 'VIP vstupenka do salónika', cost: 180, heal: 45, rep: 45, desc: '+45 HP · +45 Reputácia' },
+                { name: 'Backstage DJ Set & Drink', cost: 320, heal: 75, rep: 80, desc: '+75 HP · +80 Reputácia' },
+                { name: 'Súkromná plážová lóža', cost: 500, heal: 100, rep: 120, desc: '100% HP · +120 Reputácia' },
+              ].map((item) => (
+                <button
+                  key={item.name}
+                  onClick={() => onBuyService(item.name, item.cost, item.heal, item.rep, false)}
+                  className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-semibold text-white">{item.name}</div>
+                    <div className="text-slate-400">{item.desc}</div>
+                  </div>
+                  <span className="font-mono-num text-pink-400 font-bold">${item.cost}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {shop.category === 'precinct' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {[
+                {
+                  name: 'Vyplatenie pokuty & čistý register',
+                  cost: 250,
+                  heal: 0,
+                  rep: 10,
+                  clearWanted: true,
+                  desc: 'Zruší hľadanie PBPD · +10 RP',
+                },
+                {
+                  name: 'Taktická zdravotná sada PBPD',
+                  cost: 90,
+                  heal: 65,
+                  rep: 5,
+                  clearWanted: false,
+                  desc: '+65 Zdravie · +5 RP',
+                },
+                {
+                  name: 'Občianska podpora hliadky',
+                  cost: 150,
+                  heal: 25,
+                  rep: 35,
+                  clearWanted: false,
+                  desc: '+25 HP · +35 Reputácia',
+                },
+                {
+                  name: 'Oficiálna previerka čistého štítu',
+                  cost: 400,
+                  heal: 100,
+                  rep: 55,
+                  clearWanted: true,
+                  desc: '100% HP + Bez hľadania · +55 RP',
+                },
+              ].map((item) => (
+                <button
+                  key={item.name}
+                  onClick={() =>
+                    onBuyService(item.name, item.cost, item.heal, item.rep, item.clearWanted)
+                  }
+                  className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-semibold text-white">{item.name}</div>
+                    <div className="text-slate-400">{item.desc}</div>
+                  </div>
+                  <span className="font-mono-num text-sky-400 font-bold">${item.cost}</span>
                 </button>
               ))}
             </div>

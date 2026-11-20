@@ -8,11 +8,23 @@ import { SmartphoneModal } from './components/SmartphoneModal';
 import { StartupScreen } from './components/StartupScreen';
 import { GameEngine } from './game/engine';
 import { RoadNetwork } from './game/roadNetwork';
-import { CHARACTERS, DEFAULT_CONTROLS_CONFIG, HudSnapshot, ShopLocation } from './game/types';
+import {
+  CHARACTERS,
+  DEFAULT_CONTROLS_CONFIG,
+  getReputationRank,
+  HudSnapshot,
+  ShopLocation,
+} from './game/types';
 
 const INITIAL_HUD: HudSnapshot = {
   characterId: 'dante',
-  characterName: 'Dante Vance',
+  characterName: CHARACTERS.dante.name,
+  characterRole: CHARACTERS.dante.role,
+  characterLifeStory: CHARACTERS.dante.lifeStory,
+  characterHomeName: CHARACTERS.dante.homeName,
+  characterTheme: CHARACTERS.dante.uiTheme,
+  reputation: CHARACTERS.dante.startingReputation,
+  reputationRank: getReputationRank(CHARACTERS.dante.startingReputation, 'dante'),
   customization: { ...CHARACTERS.dante.defaults },
   skills: { ...CHARACTERS.dante.startingSkills },
   health: 100,
@@ -65,13 +77,14 @@ const INITIAL_HUD: HudSnapshot = {
   promptText: '',
   nearbyShop: null,
   insideShop: null,
+  nearbyHiddenMission: null,
   toastText: 'Načítavam Palmetto Bay...',
   toastType: 'info',
   mission: {
     activeId: null,
     isHidden: false,
     title: 'Voľná jazda — Palmetto Bay',
-    objective: 'Preskúmaj otvorené cesty, vojdi do obchodov alebo spusti misiu',
+    objective: 'Preskúmaj otvorené cesty, vojdi do budov alebo objav náhodnú misiu',
     targetX: null,
     targetY: null,
     targetZ: null,
@@ -81,6 +94,7 @@ const INITIAL_HUD: HudSnapshot = {
     reward: 0,
   },
   completedStoryIds: [],
+  discoveredHiddenIds: [],
   completedHiddenIds: [],
   cutscene: {
     active: false,
@@ -90,10 +104,10 @@ const INITIAL_HUD: HudSnapshot = {
     stepIndex: 0,
     totalSteps: 0,
   },
-  playerX: 40,
+  playerX: CHARACTERS.dante.homeSpawnX,
   playerY: 1,
-  playerZ: 12,
-  playerYaw: Math.PI,
+  playerZ: CHARACTERS.dante.homeSpawnZ,
+  playerYaw: CHARACTERS.dante.homeSpawnYaw,
   blips: [],
   gpsTarget: null,
   gpsRoute: [],
@@ -317,6 +331,7 @@ export default function App() {
           onHealAndRepair={() => engineRef.current?.healAndRepair()}
           onToggleMute={() => engineRef.current?.toggleMute()}
           onStartStoryMission={(id) => engineRef.current?.startStoryMission(id)}
+          onStartHiddenMission={(id) => engineRef.current?.startHiddenMission(id)}
           onSendCoopInvite={(friendHandle, missionId) =>
             engineRef.current?.sendCoopMissionInvite(friendHandle, missionId)
           }
@@ -337,6 +352,9 @@ export default function App() {
           playerZ={hud.playerZ}
           playerYaw={hud.playerYaw}
           onlineFriends={hud.onlineFriends}
+          discoveredHiddenIds={hud.discoveredHiddenIds}
+          completedHiddenIds={hud.completedHiddenIds}
+          accentHex={hud.characterTheme.accentHex}
           gpsTarget={hud.gpsTarget}
           gpsRoute={hud.gpsRoute}
           gpsDistance={hud.gpsDistance}
@@ -351,6 +369,10 @@ export default function App() {
           godMode={hud.godMode}
           weatherLabel={hud.weatherLabel}
           aiBulletin={hud.aiBulletin}
+          characterName={hud.characterName}
+          characterHomeName={hud.characterHomeName}
+          reputationRank={hud.reputationRank}
+          characterTheme={hud.characterTheme}
           onCallService={(service) => engineRef.current?.callEmergencyService(service)}
           onDialCheat={(code) =>
             engineRef.current?.dialCheatCode(code) ?? {
@@ -415,6 +437,9 @@ export default function App() {
           onBankAction={(act, amt) => engineRef.current?.bankAction(act, amt)}
           onDealershipVehicle={(t, buy) => engineRef.current?.buyOrTestDriveVehicle(t, buy)}
           onSafehouseAction={(act, preset) => engineRef.current?.safehouseAction(act, preset)}
+          onBuyService={(name, cost, heal, rep, clear) =>
+            engineRef.current?.buySocialOrCivicService(name, cost, heal, rep, clear)
+          }
         />
       )}
     </div>

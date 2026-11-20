@@ -4,7 +4,6 @@ import http from 'http';
 import path from 'path';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createServer as createViteServer } from 'vite';
 
 const ai = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({
@@ -33,7 +32,7 @@ interface PlayerPresence {
   id: string;
   handle: string;
   friends: string[];
-  characterId: 'dante' | 'elena';
+  characterId: 'dante' | 'elena' | 'kairo';
   x: number;
   y: number;
   z: number;
@@ -50,6 +49,7 @@ interface ClientRecord {
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
   const port = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -59,6 +59,7 @@ async function startServer() {
       ok: true,
       world: 'Palmetto Bay & Coral Keys County',
       aiConfigured: Boolean(ai),
+      uptime: Math.round(process.uptime()),
     });
   });
 
@@ -444,7 +445,12 @@ Pravidlá:
           });
           broadcastFriendsState(clientId);
         } else if (msg.type === 'state:move') {
-          record.state.characterId = msg.characterId === 'elena' ? 'elena' : 'dante';
+          record.state.characterId =
+            msg.characterId === 'elena'
+              ? 'elena'
+              : msg.characterId === 'kairo'
+                ? 'kairo'
+                : 'dante';
           record.state.x = Number(msg.x) || 0;
           record.state.y = Number(msg.y) || 0;
           record.state.z = Number(msg.z) || 0;
@@ -509,6 +515,7 @@ Pravidlá:
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
