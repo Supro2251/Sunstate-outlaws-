@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { MessageSquare, Send, Sparkles, User, X } from 'lucide-react';
+import { getUi } from '../game/i18n';
+import { LanguageCode } from '../game/types';
 
 interface NpcChatModalProps {
   npc: { id: number; name: string; role: string; mood: string };
+  language?: LanguageCode;
   weatherLabel: string;
   onSendMessage: (
     npc: { id: number; name: string; role: string; mood: string },
@@ -19,10 +22,13 @@ interface ChatMsg {
 
 export const NpcChatModal: React.FC<NpcChatModalProps> = ({
   npc,
+  language = 'en',
   weatherLabel,
   onSendMessage,
   onClose,
 }) => {
+  const ui = getUi(language);
+  const isSkCs = language === 'sk' || language === 'cs';
   const [currentMood, setCurrentMood] = useState(npc.mood);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,7 +36,9 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
       sender: 'npc',
-      text: `Ahoj, tu ${npc.name}. Počasie je práve ${weatherLabel.toLowerCase()} — čo potrebuješ?`,
+      text: isSkCs
+        ? `Ahoj, tu ${npc.name}. Počasie je práve ${weatherLabel.toLowerCase()} — čo potrebuješ?`
+        : `Hey there, I'm ${npc.name}. Weather looks ${weatherLabel.toLowerCase()} right now — what do you need?`,
     },
   ]);
 
@@ -54,11 +62,17 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
     ]);
   };
 
-  const quickPrompts = [
-    'Čo sa práve deje v tejto štvrti?',
-    'Kde tu nájdem najbližšiu prácu alebo políciu?',
-    'Ako zvládaš dnešné počasie?',
-  ];
+  const quickPrompts = isSkCs
+    ? [
+        'Čo sa práve deje v tejto štvrti?',
+        'Kde tu nájdem najbližšiu prácu alebo políciu?',
+        'Ako zvládaš dnešné počasie?',
+      ]
+    : [
+        "What's happening in this district?",
+        'Where is the nearest gig or PBPD patrol?',
+        'How are you handling this weather?',
+      ];
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-slate-950/75 p-4">
@@ -75,7 +89,9 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
                   {currentMood}
                 </span>
               </div>
-              <div className="text-[11px] text-slate-400">{npc.role} · AI NPC Dialóg</div>
+              <div className="text-[11px] text-slate-400">
+                {npc.role} · {ui.npcDialogTag}
+              </div>
             </div>
           </div>
           <button
@@ -110,7 +126,7 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
           ))}
           {loading && (
             <div className="text-xs text-cyan-300 flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5" /> {npc.name} odpovedá...
+              <MessageSquare className="w-3.5 h-3.5" /> {npc.name} {ui.npcTyping}
             </div>
           )}
           {error && (
@@ -144,7 +160,7 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Napíš správu občanovi..."
+            placeholder={ui.npcPlaceholder}
             className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
           />
           <button
@@ -152,7 +168,7 @@ export const NpcChatModal: React.FC<NpcChatModalProps> = ({
             disabled={loading || !input.trim()}
             className="px-3.5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 text-xs font-bold flex items-center gap-1.5"
           >
-            <Send className="w-3.5 h-3.5" /> Odoslať
+            <Send className="w-3.5 h-3.5" /> {ui.sendBtn}
           </button>
         </form>
       </div>

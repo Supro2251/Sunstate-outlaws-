@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { Navigation } from 'lucide-react';
+import { getUi } from '../game/i18n';
 import { RoadNetwork } from '../game/roadNetwork';
-import { GpsPoint, MinimapBlip } from '../game/types';
+import { GpsPoint, LanguageCode, MinimapBlip } from '../game/types';
 
 interface MinimapProps {
   playerX: number;
@@ -15,6 +16,7 @@ interface MinimapProps {
   gpsDistance: number;
   gpsTurnHint: string;
   accentHex?: string;
+  language?: LanguageCode;
   onOpenMap: () => void;
 }
 
@@ -38,9 +40,11 @@ export const Minimap: React.FC<MinimapProps> = ({
   gpsDistance,
   gpsTurnHint,
   accentHex = '#22d3ee',
+  language = 'en',
   onOpenMap,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ui = getUi(language);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -59,14 +63,12 @@ export const Minimap: React.FC<MinimapProps> = ({
     const toMapX = (wx: number) => w * 0.5 + (wx - playerX) * scale;
     const toMapY = (wz: number) => h * 0.5 + (wz - playerZ) * scale;
 
-    // Western Canyon & Pine Forest
     const forestRight = toMapX(-1040);
     if (forestRight > 0) {
       ctx.fillStyle = '#152c22';
       ctx.fillRect(0, 0, forestRight, h);
     }
 
-    // Lush Grass Ground Blocks & Parks
     ctx.fillStyle = '#162821';
     ctx.fillRect(Math.max(0, forestRight), 0, Math.max(0, toMapX(750) - Math.max(0, forestRight)), h);
 
@@ -77,13 +79,11 @@ export const Minimap: React.FC<MinimapProps> = ({
       ctx.fill();
     }
 
-    // Redrock Lake
     ctx.fillStyle = '#0c4a6e';
     ctx.beginPath();
     ctx.arc(toMapX(-2080), toMapY(240), 142 * scale, 0, Math.PI * 2);
     ctx.fill();
 
-    // Beach & Ocean (x > 750 sand, x > 920 ocean)
     const sandLeft = toMapX(750);
     const oceanLeft = toMapX(920);
     ctx.fillStyle = '#5c4d35';
@@ -91,22 +91,18 @@ export const Minimap: React.FC<MinimapProps> = ({
     ctx.fillStyle = '#0c4a6e';
     ctx.fillRect(oceanLeft, 0, w - oceanLeft, h);
 
-    // Palmetto International Airport Apron & Runways
     ctx.fillStyle = '#1e293b';
     ctx.fillRect(toMapX(-1310), toMapY(1180), 920 * scale, 680 * scale);
     ctx.fillStyle = '#475569';
     ctx.fillRect(toMapX(-1090), toMapY(1637), 540 * scale, 46 * scale);
     ctx.fillRect(toMapX(-1010), toMapY(1132), 380 * scale, 36 * scale);
 
-    // Sunset Pier
     ctx.fillStyle = '#926239';
     ctx.fillRect(toMapX(850), toMapY(-9), 190 * scale, 18 * scale);
 
-    // Curved Road Splines & Sidewalk Shoulders
     if (network) {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      // Curb outline pass
       for (const edge of network.edges) {
         if (edge.isDirt) continue;
         ctx.strokeStyle = '#64748b';
@@ -120,7 +116,6 @@ export const Minimap: React.FC<MinimapProps> = ({
         });
         ctx.stroke();
       }
-      // Asphalt/Dirt core pass
       for (const edge of network.edges) {
         ctx.strokeStyle = edge.isDirt ? '#7c5d40' : '#334155';
         ctx.lineWidth = Math.max(2, edge.width * scale);
@@ -135,7 +130,6 @@ export const Minimap: React.FC<MinimapProps> = ({
       }
     }
 
-    // Active Road-Following GPS Route Polyline
     if (gpsRoute.length > 1) {
       ctx.strokeStyle = accentHex;
       ctx.lineWidth = 3.2;
@@ -151,7 +145,6 @@ export const Minimap: React.FC<MinimapProps> = ({
       ctx.stroke();
     }
 
-    // Blips
     blips.forEach((b) => {
       const rawX = toMapX(b.x);
       const rawY = toMapY(b.z);
@@ -187,12 +180,10 @@ export const Minimap: React.FC<MinimapProps> = ({
       }
     });
 
-    // Player Orientation Cone + Directional Arrow (always synchronized to playerYaw)
     ctx.save();
     ctx.translate(w * 0.5, h * 0.5);
     ctx.rotate(Math.PI - playerYaw);
 
-    // Subtle viewing/heading cone
     ctx.fillStyle = `${accentHex}33`;
     ctx.beginPath();
     ctx.moveTo(0, 0);
@@ -201,7 +192,6 @@ export const Minimap: React.FC<MinimapProps> = ({
     ctx.closePath();
     ctx.fill();
 
-    // Crisp Arrow
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#020617';
     ctx.lineWidth = 1.8;
@@ -230,11 +220,11 @@ export const Minimap: React.FC<MinimapProps> = ({
       <button
         onClick={onOpenMap}
         className="block w-full text-left relative group"
-        title="Otvoriť celú GPS mapu (M)"
+        title={ui.mapTitle}
       >
         <canvas ref={canvasRef} width={216} height={148} className="block" />
         <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-slate-950/90 border border-white/15 text-[10px] font-medium text-slate-200 group-hover:text-white">
-          M · Mapa
+          {ui.miniMapTag}
         </span>
       </button>
 
@@ -264,3 +254,4 @@ export const Minimap: React.FC<MinimapProps> = ({
     </div>
   );
 };
+

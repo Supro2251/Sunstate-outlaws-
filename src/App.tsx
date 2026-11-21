@@ -8,23 +8,26 @@ import { SmartphoneModal } from './components/SmartphoneModal';
 import { StartupScreen } from './components/StartupScreen';
 import { GameEngine } from './game/engine';
 import { RoadNetwork } from './game/roadNetwork';
+import { getLocalizedCharacterCopy, getLocalizedRank, getUi } from './game/i18n';
 import {
   CHARACTERS,
   DEFAULT_CONTROLS_CONFIG,
-  getReputationRank,
   HudSnapshot,
   ShopLocation,
 } from './game/types';
 
+const EN_UI = getUi('en');
+const EN_DANTE = getLocalizedCharacterCopy('dante', 'en');
+
 const INITIAL_HUD: HudSnapshot = {
   characterId: 'dante',
   characterName: CHARACTERS.dante.name,
-  characterRole: CHARACTERS.dante.role,
-  characterLifeStory: CHARACTERS.dante.lifeStory,
-  characterHomeName: CHARACTERS.dante.homeName,
+  characterRole: EN_DANTE.role,
+  characterLifeStory: EN_DANTE.story,
+  characterHomeName: EN_DANTE.homeName,
   characterTheme: CHARACTERS.dante.uiTheme,
   reputation: CHARACTERS.dante.startingReputation,
-  reputationRank: getReputationRank(CHARACTERS.dante.startingReputation, 'dante'),
+  reputationRank: getLocalizedRank(CHARACTERS.dante.startingReputation, 'dante', 'en'),
   customization: { ...CHARACTERS.dante.defaults },
   skills: { ...CHARACTERS.dante.startingSkills },
   health: 100,
@@ -62,19 +65,19 @@ const INITIAL_HUD: HudSnapshot = {
   ammo: { fists: 0, pistol: 84, smg: 0 },
   unlockedWeapons: { fists: true, pistol: true, smg: false },
   radioId: 'off',
-  radioName: 'Rádio vypnuté',
+  radioName: EN_UI.radioOffName,
   timePreset: 'golden',
   timeHour: 17.4,
   autoTimeCycle: true,
   weatherPreset: 'clear',
   targetWeatherPreset: 'clear',
-  weatherLabel: 'Jasno',
+  weatherLabel: 'Clear',
   autoWeatherCycle: true,
   rainIntensity: 0,
   aiDirectorStatus: 'idle',
   aiDirectorError: '',
-  aiBulletin: 'Palmetto Bay · AI mestský dispečing pripravený.',
-  aiPoliceTactic: 'Bežná hliadka obvodov PBPD',
+  aiBulletin: 'Palmetto Bay · AI City Dispatch ready.',
+  aiPoliceTactic: 'Standard PBPD district patrol',
   aiNearbyNpcs: [],
   nearbyInteractNpc: null,
   quality: 'high',
@@ -83,13 +86,13 @@ const INITIAL_HUD: HudSnapshot = {
   nearbyShop: null,
   insideShop: null,
   nearbyHiddenMission: null,
-  toastText: 'Načítavam Palmetto Bay...',
+  toastText: EN_UI.welcomeToast,
   toastType: 'info',
   mission: {
     activeId: null,
     isHidden: false,
-    title: 'Voľná jazda — Palmetto Bay',
-    objective: 'Preskúmaj otvorené cesty, vojdi do budov alebo objav náhodnú misiu',
+    title: EN_UI.freeRoamTitle,
+    objective: EN_UI.freeRoamObjective,
     targetX: null,
     targetY: null,
     targetZ: null,
@@ -123,9 +126,17 @@ const INITIAL_HUD: HudSnapshot = {
   wasted: false,
   soundMuted: false,
   gamepadConnected: false,
+  activeInputDevice: 'keyboard',
+  detectedGamepadType: 'playstation',
+  gamepadLayoutPreference: 'auto',
+  steeringSensitivity: 1.0,
+  lookSensitivity: 1.0,
+  language: 'en',
+  cloudSyncId: '',
+  cloudLastSavedAt: null,
   activeControlContext: 'on_foot',
   controlsConfig: JSON.parse(JSON.stringify(DEFAULT_CONTROLS_CONFIG)),
-  playerHandle: 'Hráč',
+  playerHandle: 'Player',
   friends: [],
   onlineFriends: [],
   pendingInvite: null,
@@ -229,7 +240,7 @@ export default function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (isCapturingControlRef.current) return;
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
         if (e.code === 'Escape') {
           (target as HTMLInputElement).blur();
         }
@@ -309,7 +320,14 @@ export default function App() {
       {!started && (
         <StartupScreen
           selectedCharacter={hud.characterId}
+          language={hud.language}
+          cloudSyncId={hud.cloudSyncId}
           onSelectCharacter={(id) => engineRef.current?.setCharacter(id)}
+          onSetLanguage={(lang) => engineRef.current?.setLanguage(lang)}
+          onLoadCloud={(syncId) =>
+            engineRef.current?.loadFromCloud(syncId) ??
+            Promise.resolve({ ok: false, error: 'Engine not ready' })
+          }
           onStartGame={handleStartGame}
         />
       )}
@@ -353,6 +371,7 @@ export default function App() {
       {started && showMap && (
         <InteractiveMapModal
           network={network}
+          language={hud.language}
           playerX={hud.playerX}
           playerZ={hud.playerZ}
           playerYaw={hud.playerYaw}
@@ -371,6 +390,7 @@ export default function App() {
 
       {started && showPhone && (
         <SmartphoneModal
+          language={hud.language}
           godMode={hud.godMode}
           weatherLabel={hud.weatherLabel}
           aiBulletin={hud.aiBulletin}
@@ -382,16 +402,16 @@ export default function App() {
           onDialCheat={(code) =>
             engineRef.current?.dialCheatCode(code) ?? {
               ok: false,
-              message: 'Hra ešte nie je pripravená.',
+              message: 'Engine not ready.',
             }
           }
           onAskAiCopilot={(text) =>
             engineRef.current?.sendAiChat('copilot', text) ??
-            Promise.resolve({ reply: '', error: 'Hra ešte nie je pripravená.' })
+            Promise.resolve({ reply: '', error: 'Engine not ready.' })
           }
           onGenerateAiMission={(theme) =>
             engineRef.current?.generateAndStartAiMission(theme) ??
-            Promise.resolve({ ok: false, error: 'Hra ešte nie je pripravená.' })
+            Promise.resolve({ ok: false, error: 'Engine not ready.' })
           }
           onClose={() => setShowPhone(false)}
         />
@@ -400,12 +420,13 @@ export default function App() {
       {started && activeNpcChat && (
         <NpcChatModal
           npc={activeNpcChat}
+          language={hud.language}
           weatherLabel={hud.weatherLabel}
           onSendMessage={(npc, text) =>
             engineRef.current?.sendAiChat(
               { npcId: npc.id, npcName: npc.name, npcRole: npc.role, npcMood: npc.mood },
               text,
-            ) ?? Promise.resolve({ reply: '', error: 'Hra ešte nie je pripravená.' })
+            ) ?? Promise.resolve({ reply: '', error: 'Engine not ready.' })
           }
           onClose={() => setActiveNpcChat(null)}
         />
@@ -415,6 +436,19 @@ export default function App() {
         <SettingsModal
           hud={hud}
           onSetQuality={(q) => engineRef.current?.setQuality(q)}
+          onSetLanguage={(lang) => engineRef.current?.setLanguage(lang)}
+          onSetGamepadLayout={(pref) => engineRef.current?.setGamepadLayoutPreference(pref)}
+          onSetSteeringSensitivity={(val) => engineRef.current?.setSteeringSensitivity(val)}
+          onSetLookSensitivity={(val) => engineRef.current?.setLookSensitivity(val)}
+          onSaveCloud={(syncId) =>
+            engineRef.current?.saveToCloud(syncId) ??
+            Promise.resolve({ ok: false, error: 'Engine not ready' })
+          }
+          onLoadCloud={(syncId) =>
+            engineRef.current?.loadFromCloud(syncId) ??
+            Promise.resolve({ ok: false, error: 'Engine not ready' })
+          }
+          onUnlinkCloud={() => engineRef.current?.unlinkCloud()}
           onSetHandle={(h) => engineRef.current?.setPlayerHandle(h)}
           onAddFriend={(h) => engineRef.current?.addFriendHandle(h)}
           onRemoveFriend={(h) => engineRef.current?.removeFriendHandle(h)}

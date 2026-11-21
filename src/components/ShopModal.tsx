@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { getTimeLabel, getUi } from '../game/i18n';
 import {
   BeardStyleId,
   CharacterCustomization,
@@ -54,6 +55,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   onSafehouseAction,
   onBuyService,
 }) => {
+  const lang = hud.language;
+  const ui = getUi(lang);
+  const isSkCs = lang === 'sk' || lang === 'cs';
   const accentHex = hud.characterTheme.accentHex;
 
   return (
@@ -76,6 +80,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             </span>
             <button
               onClick={onClose}
+              title={ui.closeShop}
               className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
             >
               <X className="w-4 h-4" />
@@ -87,10 +92,34 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'convenience' && (
             <div className="grid grid-cols-2 gap-2.5">
               {[
-                { name: 'SunState Soda', cost: 35, heal: 25, armor: 0, desc: '+25 Zdravie' },
-                { name: 'Cuban Espresso', cost: 55, heal: 40, armor: 0, desc: '+40 Zdravie' },
-                { name: 'Tropical Bento', cost: 110, heal: 85, armor: 0, desc: '+85 Zdravie' },
-                { name: 'Neon Surge Energy', cost: 145, heal: 60, armor: 25, desc: '+60 HP & +25 Vesta' },
+                {
+                  name: 'SunState Soda',
+                  cost: 35,
+                  heal: 25,
+                  armor: 0,
+                  desc: isSkCs ? '+25 Zdravie' : `+25 ${ui.health}`,
+                },
+                {
+                  name: 'Cuban Espresso',
+                  cost: 55,
+                  heal: 40,
+                  armor: 0,
+                  desc: isSkCs ? '+40 Zdravie' : `+40 ${ui.health}`,
+                },
+                {
+                  name: 'Tropical Bento',
+                  cost: 110,
+                  heal: 85,
+                  armor: 0,
+                  desc: isSkCs ? '+85 Zdravie' : `+85 ${ui.health}`,
+                },
+                {
+                  name: 'Neon Surge Energy',
+                  cost: 145,
+                  heal: 60,
+                  armor: 25,
+                  desc: `+60 HP & +25 ${ui.armor}`,
+                },
               ].map((item) => (
                 <button
                   key={item.name}
@@ -109,12 +138,20 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
           {shop.category === 'cafe' && (
             <div className="grid grid-cols-2 gap-2.5">
-              {[
-                { name: 'Palmetto Espresso', cost: 45, heal: 25, rep: 5, desc: '+25 Zdravie · +5 RP' },
-                { name: 'Ľadové Matcha Latté', cost: 65, heal: 40, rep: 8, desc: '+40 Zdravie · +8 RP' },
-                { name: 'Karamelový Croissant & Káva', cost: 95, heal: 65, rep: 12, desc: '+65 Zdravie · +12 RP' },
-                { name: 'Špeciál pražiarne pre tím', cost: 180, heal: 100, rep: 20, desc: 'Plné zdravie · +20 RP' },
-              ].map((item) => (
+              {(isSkCs
+                ? [
+                    { name: 'Palmetto Espresso', cost: 45, heal: 25, rep: 5, desc: '+25 Zdravie · +5 RP' },
+                    { name: 'Ľadové Matcha Latté', cost: 65, heal: 40, rep: 8, desc: '+40 Zdravie · +8 RP' },
+                    { name: 'Karamelový Croissant & Káva', cost: 95, heal: 65, rep: 12, desc: '+65 Zdravie · +12 RP' },
+                    { name: 'Špeciál pražiarne pre tím', cost: 180, heal: 100, rep: 20, desc: 'Plné zdravie · +20 RP' },
+                  ]
+                : [
+                    { name: 'Palmetto Espresso', cost: 45, heal: 25, rep: 5, desc: '+25 Health · +5 RP' },
+                    { name: 'Iced Matcha Latte', cost: 65, heal: 40, rep: 8, desc: '+40 Health · +8 RP' },
+                    { name: 'Caramel Croissant & Coffee', cost: 95, heal: 65, rep: 12, desc: '+65 Health · +12 RP' },
+                    { name: 'Roastery Crew Special', cost: 180, heal: 100, rep: 20, desc: 'Full Health · +20 RP' },
+                  ]
+              ).map((item) => (
                 <button
                   key={item.name}
                   onClick={() => onBuyService(item.name, item.cost, item.heal, item.rep, false)}
@@ -132,12 +169,20 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
           {shop.category === 'club' && (
             <div className="grid grid-cols-2 gap-2.5">
-              {[
-                { name: 'Neónový koktail', cost: 90, heal: 30, rep: 15, desc: '+30 HP · +15 Reputácia' },
-                { name: 'VIP vstupenka do salónika', cost: 420, heal: 45, rep: 45, desc: '+45 HP · +45 Reputácia' },
-                { name: 'Backstage DJ Set & Drink', cost: 780, heal: 75, rep: 80, desc: '+75 HP · +80 Reputácia' },
-                { name: 'Súkromná plážová lóža', cost: 1250, heal: 100, rep: 120, desc: '100% HP · +120 Reputácia' },
-              ].map((item) => (
+              {(isSkCs
+                ? [
+                    { name: 'Neónový koktail', cost: 90, heal: 30, rep: 15, desc: '+30 HP · +15 Reputácia' },
+                    { name: 'VIP vstupenka do salónika', cost: 420, heal: 45, rep: 45, desc: '+45 HP · +45 Reputácia' },
+                    { name: 'Backstage DJ Set & Drink', cost: 780, heal: 75, rep: 80, desc: '+75 HP · +80 Reputácia' },
+                    { name: 'Súkromná plážová lóža', cost: 1250, heal: 100, rep: 120, desc: '100% HP · +120 Reputácia' },
+                  ]
+                : [
+                    { name: 'Neon Tide Cocktail', cost: 90, heal: 30, rep: 15, desc: '+30 HP · +15 Reputation' },
+                    { name: 'VIP Lounge Pass', cost: 420, heal: 45, rep: 45, desc: '+45 HP · +45 Reputation' },
+                    { name: 'Backstage DJ Set & Drink', cost: 780, heal: 75, rep: 80, desc: '+75 HP · +80 Reputation' },
+                    { name: 'Private Beach Cabana', cost: 1250, heal: 100, rep: 120, desc: '100% HP · +120 Reputation' },
+                  ]
+              ).map((item) => (
                 <button
                   key={item.name}
                   onClick={() => onBuyService(item.name, item.cost, item.heal, item.rep, false)}
@@ -155,40 +200,76 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
           {shop.category === 'precinct' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {[
-                {
-                  name: 'Vyplatenie pokuty & čistý register',
-                  cost: 650,
-                  heal: 0,
-                  rep: 10,
-                  clearWanted: true,
-                  desc: 'Zruší hľadanie PBPD · +10 RP',
-                },
-                {
-                  name: 'Taktická zdravotná sada PBPD',
-                  cost: 220,
-                  heal: 65,
-                  rep: 5,
-                  clearWanted: false,
-                  desc: '+65 Zdravie · +5 RP',
-                },
-                {
-                  name: 'Občianska podpora hliadky',
-                  cost: 380,
-                  heal: 25,
-                  rep: 35,
-                  clearWanted: false,
-                  desc: '+25 HP · +35 Reputácia',
-                },
-                {
-                  name: 'Oficiálna previerka čistého štítu',
-                  cost: 1100,
-                  heal: 100,
-                  rep: 55,
-                  clearWanted: true,
-                  desc: '100% HP + Bez hľadania · +55 RP',
-                },
-              ].map((item) => (
+              {(isSkCs
+                ? [
+                    {
+                      name: 'Vyplatenie pokuty & čistý register',
+                      cost: 650,
+                      heal: 0,
+                      rep: 10,
+                      clearWanted: true,
+                      desc: 'Zruší hľadanie PBPD · +10 RP',
+                    },
+                    {
+                      name: 'Taktická zdravotná sada PBPD',
+                      cost: 220,
+                      heal: 65,
+                      rep: 5,
+                      clearWanted: false,
+                      desc: '+65 Zdravie · +5 RP',
+                    },
+                    {
+                      name: 'Občianska podpora hliadky',
+                      cost: 380,
+                      heal: 25,
+                      rep: 35,
+                      clearWanted: false,
+                      desc: '+25 HP · +35 Reputácia',
+                    },
+                    {
+                      name: 'Oficiálna previerka čistého štítu',
+                      cost: 1100,
+                      heal: 100,
+                      rep: 55,
+                      clearWanted: true,
+                      desc: '100% HP + Bez hľadania · +55 RP',
+                    },
+                  ]
+                : [
+                    {
+                      name: 'Pay Fine & Clear Record',
+                      cost: 650,
+                      heal: 0,
+                      rep: 10,
+                      clearWanted: true,
+                      desc: 'Clears PBPD Wanted · +10 RP',
+                    },
+                    {
+                      name: 'PBPD Tactical Medkit',
+                      cost: 220,
+                      heal: 65,
+                      rep: 5,
+                      clearWanted: false,
+                      desc: '+65 Health · +5 RP',
+                    },
+                    {
+                      name: 'Civic Patrol Fund',
+                      cost: 380,
+                      heal: 25,
+                      rep: 35,
+                      clearWanted: false,
+                      desc: '+25 HP · +35 Reputation',
+                    },
+                    {
+                      name: 'Full Clean-Slate Clearance',
+                      cost: 1100,
+                      heal: 100,
+                      rep: 55,
+                      clearWanted: true,
+                      desc: '100% HP + Clear Wanted · +55 RP',
+                    },
+                  ]
+              ).map((item) => (
                 <button
                   key={item.name}
                   onClick={() =>
@@ -213,7 +294,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   onClick={() => onVehicleMod('repair')}
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
-                  <span className="font-semibold text-white">Oprava karosérie & motora</span>
+                  <span className="font-semibold text-white">
+                    {isSkCs ? 'Oprava karosérie & motora' : 'Body & Engine Repair'}
+                  </span>
                   <span className="font-mono-num text-emerald-400">$450</span>
                 </button>
                 <button
@@ -221,7 +304,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">
-                    Tuning motora (Lv.{hud.vehicleUpgrades.engineLevel}/3)
+                    {isSkCs ? 'Tuning motora' : 'Engine Tune'} (Lv.{hud.vehicleUpgrades.engineLevel}/3)
                   </span>
                   <span className="font-mono-num text-emerald-400">
                     ${(2400 + hud.vehicleUpgrades.engineLevel * 1400).toLocaleString()}
@@ -232,7 +315,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">
-                    {hud.vehicleUpgrades.turboInstalled ? 'Twin-Turbo (Osadené)' : 'Inštalovať Twin-Turbo'}
+                    {hud.vehicleUpgrades.turboInstalled
+                      ? isSkCs
+                        ? 'Twin-Turbo (Osadené)'
+                        : 'Twin-Turbo (Installed)'
+                      : isSkCs
+                        ? 'Inštalovať Twin-Turbo'
+                        : 'Install Twin-Turbo'}
                   </span>
                   <span className="font-mono-num text-emerald-400">$4,500</span>
                 </button>
@@ -241,7 +330,8 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">
-                    Podvozok & Brzdy (Lv.{hud.vehicleUpgrades.handlingLevel}/2)
+                    {isSkCs ? 'Podvozok & Brzdy' : 'Suspension & Brakes'} (Lv.
+                    {hud.vehicleUpgrades.handlingLevel}/2)
                   </span>
                   <span className="font-mono-num text-emerald-400">
                     ${(1800 + hud.vehicleUpgrades.handlingLevel * 1200).toLocaleString()}
@@ -250,7 +340,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               </div>
 
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Metalický lak ($650)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Metalický lak ($650)' : 'Metallic Respray ($650)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Flamingo Pink', hex: 0xff2a6d },
@@ -277,7 +369,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               </div>
 
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Podsvietenie Neón ($1,100)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Podsvietenie Neón ($1,100)' : 'Neon Underglow ($1,100)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {(['off', 'cyan', 'pink', 'lime', 'amber'] as NeonColorId[]).map((n) => (
                     <button
@@ -300,7 +394,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'armory' && (
             <div className="space-y-3">
               <div className="p-2.5 rounded bg-amber-950/50 border border-amber-400/30 text-amber-200">
-                Tip: V zadnej časti obchodu sa nachádza živá strelnica s pohyblivými terčmi! Strieľaj na ne pre tréning mušky a malé odmeny.
+                {ui.armoryRangeTip}
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <button
@@ -310,7 +404,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   <div>
                     <div className="font-semibold text-white">Viper 9mm</div>
                     <div className="text-slate-400">
-                      {hud.unlockedWeapons.pistol ? 'Vlastnená · Doplniť' : 'Odomknúť pištoľ'}
+                      {hud.unlockedWeapons.pistol
+                        ? isSkCs
+                          ? 'Vlastnená · Doplniť'
+                          : 'Owned · Refill Ammo'
+                        : isSkCs
+                          ? 'Odomknúť pištoľ'
+                          : 'Unlock Sidearm'}
                     </div>
                   </div>
                   <span className="font-mono-num text-emerald-400">$1,200</span>
@@ -322,7 +422,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   <div>
                     <div className="font-semibold text-white">Tide-9 SMG</div>
                     <div className="text-slate-400">
-                      {hud.unlockedWeapons.smg ? 'Vlastnené · Doplniť' : 'Rýchlopalný samopal'}
+                      {hud.unlockedWeapons.smg
+                        ? isSkCs
+                          ? 'Vlastnené · Doplniť'
+                          : 'Owned · Refill Ammo'
+                        : isSkCs
+                          ? 'Rýchlopalný samopal'
+                          : 'Rapid-fire SMG'}
                     </div>
                   </div>
                   <span className="font-mono-num text-emerald-400">$3,400</span>
@@ -331,14 +437,18 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   onClick={() => onBuyArmory('ammo_pistol')}
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
-                  <span className="font-semibold text-white">Náboje 9mm (Plný zásobník)</span>
+                  <span className="font-semibold text-white">
+                    {isSkCs ? 'Náboje 9mm (Plný zásobník)' : '9mm Ammo (Full Pack)'}
+                  </span>
                   <span className="font-mono-num text-emerald-400">$280</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('ammo_smg')}
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
-                  <span className="font-semibold text-white">Náboje SMG (Plný zásobník)</span>
+                  <span className="font-semibold text-white">
+                    {isSkCs ? 'Náboje SMG (Plný zásobník)' : 'SMG Ammo (Full Pack)'}
+                  </span>
                   <span className="font-mono-num text-emerald-400">$540</span>
                 </button>
                 <button
@@ -346,8 +456,12 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <div>
-                    <div className="font-semibold text-white">Nepriestrelná vesta</div>
-                    <div className="text-slate-400">Doplní vestu na 100%</div>
+                    <div className="font-semibold text-white">
+                      {isSkCs ? 'Nepriestrelná vesta' : 'Kevlar Body Armor'}
+                    </div>
+                    <div className="text-slate-400">
+                      {isSkCs ? 'Doplní vestu na 100%' : 'Restores armor to 100%'}
+                    </div>
                   </div>
                   <span className="font-mono-num text-emerald-400">$1,150</span>
                 </button>
@@ -356,9 +470,17 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <div>
-                    <div className="font-semibold text-white">Padák</div>
+                    <div className="font-semibold text-white">
+                      {isSkCs ? 'Padák' : 'Parachute Rig'}
+                    </div>
                     <div className="text-slate-400">
-                      {hud.hasParachute ? 'Zbalený na chrbte' : 'Pre zoskoky z lietadiel & striech'}
+                      {hud.hasParachute
+                        ? isSkCs
+                          ? 'Zbalený na chrbte'
+                          : 'Equipped on back'
+                        : isSkCs
+                          ? 'Pre zoskoky z lietadiel & striech'
+                          : 'For aircraft & rooftop jumps'}
                     </div>
                   </div>
                   <span className="font-mono-num text-emerald-400">$950</span>
@@ -370,7 +492,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'clothing' && (
             <div className="space-y-3">
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Bundy & Saká ($380)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Bundy & Saká ($380)' : 'Jackets & Blazers ($380)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Miami Cyan', hex: 0x06b6d4 },
@@ -395,14 +519,24 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Nohavice ($240)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Nohavice ($240)' : 'Trousers ($240)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    { name: 'Tmavá bridlica', hex: 0x1e293b },
-                    { name: 'Piesková béžová', hex: 0xd6d3d1 },
-                    { name: 'Indigo Denim', hex: 0x1e3a8a },
-                    { name: 'Čierna', hex: 0x09090b },
-                  ].map((item) => (
+                  {(isSkCs
+                    ? [
+                        { name: 'Tmavá bridlica', hex: 0x1e293b },
+                        { name: 'Piesková béžová', hex: 0xd6d3d1 },
+                        { name: 'Indigo Denim', hex: 0x1e3a8a },
+                        { name: 'Čierna', hex: 0x09090b },
+                      ]
+                    : [
+                        { name: 'Dark Slate', hex: 0x1e293b },
+                        { name: 'Sandstone', hex: 0xd6d3d1 },
+                        { name: 'Indigo Denim', hex: 0x1e3a8a },
+                        { name: 'Jet Black', hex: 0x09090b },
+                      ]
+                  ).map((item) => (
                     <button
                       key={item.name}
                       onClick={() => onUpdateStyle({ pantsColor: item.hex }, 240, item.name)}
@@ -414,14 +548,24 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Okuliare ($180)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Okuliare ($180)' : 'Eyewear ($180)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    { name: 'Obsidian', hex: 0x0f172a },
-                    { name: 'Zlatá', hex: 0xf59e0b },
-                    { name: 'Neónová modrá', hex: 0x0284c7 },
-                    { name: 'Ružová', hex: 0xe11d48 },
-                  ].map((item) => (
+                  {(isSkCs
+                    ? [
+                        { name: 'Obsidian', hex: 0x0f172a },
+                        { name: 'Zlatá', hex: 0xf59e0b },
+                        { name: 'Neónová modrá', hex: 0x0284c7 },
+                        { name: 'Ružová', hex: 0xe11d48 },
+                      ]
+                    : [
+                        { name: 'Obsidian', hex: 0x0f172a },
+                        { name: 'Gold Frame', hex: 0xf59e0b },
+                        { name: 'Neon Blue', hex: 0x0284c7 },
+                        { name: 'Flamingo Rose', hex: 0xe11d48 },
+                      ]
+                  ).map((item) => (
                     <button
                       key={item.name}
                       onClick={() => onUpdateStyle({ shadesColor: item.hex }, 180, item.name)}
@@ -438,12 +582,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'barber' && (
             <div className="space-y-3">
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Účesy ($220)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Účesy ($220)' : 'Hairstyles ($220)'}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {(['fade', 'slick', 'waves', 'buzz'] as HairStyleId[]).map((h) => (
                     <button
                       key={h}
-                      onClick={() => onUpdateStyle({ hairStyle: h }, 220, `Strih: ${h}`)}
+                      onClick={() => onUpdateStyle({ hairStyle: h }, 220, `Cut: ${h}`)}
                       className={`p-2.5 rounded border capitalize text-left ${
                         hud.customization.hairStyle === h
                           ? 'bg-amber-500 text-slate-950 font-semibold border-amber-300'
@@ -456,12 +602,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Brada ($150)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Brada ($150)' : 'Facial Hair ($150)'}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {(['clean', 'stubble', 'goatee', 'full'] as BeardStyleId[]).map((b) => (
                     <button
                       key={b}
-                      onClick={() => onUpdateStyle({ beardStyle: b }, 150, `Brada: ${b}`, true)}
+                      onClick={() => onUpdateStyle({ beardStyle: b }, 150, `Beard: ${b}`, true)}
                       className={`p-2.5 rounded border capitalize text-left ${
                         hud.customization.beardStyle === b
                           ? 'bg-amber-500 text-slate-950 font-semibold border-amber-300'
@@ -474,14 +622,24 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Farba vlasov ($120)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">
+                  {isSkCs ? 'Farba vlasov ($120)' : 'Hair Dye ($120)'}
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    { name: 'Čierna', hex: 0x171717 },
-                    { name: 'Hnedá Espresso', hex: 0x3b2314 },
-                    { name: 'Platinová', hex: 0xe2e8f0 },
-                    { name: 'Neónová tyrkysová', hex: 0x06b6d4 },
-                  ].map((c) => (
+                  {(isSkCs
+                    ? [
+                        { name: 'Čierna', hex: 0x171717 },
+                        { name: 'Hnedá Espresso', hex: 0x3b2314 },
+                        { name: 'Platinová', hex: 0xe2e8f0 },
+                        { name: 'Neónová tyrkysová', hex: 0x06b6d4 },
+                      ]
+                    : [
+                        { name: 'Jet Black', hex: 0x171717 },
+                        { name: 'Espresso Brown', hex: 0x3b2314 },
+                        { name: 'Platinum Blonde', hex: 0xe2e8f0 },
+                        { name: 'Neon Cyan', hex: 0x06b6d4 },
+                      ]
+                  ).map((c) => (
                     <button
                       key={c.name}
                       onClick={() => onUpdateStyle({ hairColor: c.hex }, 120, c.name)}
@@ -498,12 +656,19 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'tattoo' && (
             <div className="grid grid-cols-2 gap-2.5">
               {(
-                [
-                  { id: 'serpent', name: 'Neónový Had (Rukáv)', cost: 650 },
-                  { id: 'compass', name: 'Kompas Coral Keys', cost: 580 },
-                  { id: 'sunstate', name: 'Erb Sunstate', cost: 720 },
-                  { id: 'none', name: 'Laserové odstránenie', cost: 320 },
-                ] as Array<{ id: TattooStyleId; name: string; cost: number }>
+                (isSkCs
+                  ? [
+                      { id: 'serpent', name: 'Neónový Had (Rukáv)', cost: 650 },
+                      { id: 'compass', name: 'Kompas Coral Keys', cost: 580 },
+                      { id: 'sunstate', name: 'Erb Sunstate', cost: 720 },
+                      { id: 'none', name: 'Laserové odstránenie', cost: 320 },
+                    ]
+                  : [
+                      { id: 'serpent', name: 'Neon Serpent (Sleeve)', cost: 650 },
+                      { id: 'compass', name: 'Coral Keys Compass', cost: 580 },
+                      { id: 'sunstate', name: 'Sunstate Crest', cost: 720 },
+                      { id: 'none', name: 'Laser Removal', cost: 320 },
+                    ]) as Array<{ id: TattooStyleId; name: string; cost: number }>
               ).map((t) => (
                 <button
                   key={t.id}
@@ -525,13 +690,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3 p-3 rounded bg-slate-950 border border-white/10">
                 <div>
-                  <div className="text-slate-400">Hotovosť pri sebe</div>
+                  <div className="text-slate-400">{ui.cash}</div>
                   <div className="font-mono-num text-lg font-bold text-emerald-400">
                     ${hud.cash.toLocaleString()}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400">Účet Apex Trust</div>
+                  <div className="text-slate-400">Apex Trust {ui.bank}</div>
                   <div className="font-mono-num text-lg font-bold text-sky-400">
                     ${hud.bankBalance.toLocaleString()}
                   </div>
@@ -542,13 +707,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   onClick={() => onBankAction('deposit', 500)}
                   className="p-2.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-semibold"
                 >
-                  Vložiť $500
+                  {ui.deposit500}
                 </button>
                 <button
                   onClick={() => onBankAction('withdraw', 500)}
                   className="p-2.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-semibold"
                 >
-                  Vybrať $500
+                  {ui.withdraw500}
                 </button>
                 <button
                   onClick={() => {
@@ -557,7 +722,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   }}
                   className="p-3 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold col-span-2"
                 >
-                  Spustiť Bankovú Lúpež — Zlatá horúčka (+$850)
+                  {ui.bankHeistBtn}
                 </button>
               </div>
             </div>
@@ -579,7 +744,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                           <span>{spec.name}</span>
                           {isOwned && (
                             <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px]">
-                              V garáži
+                              {ui.inGarage}
                             </span>
                           )}
                         </div>
@@ -595,7 +760,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                           }}
                           className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
                         >
-                          Vyskúšať
+                          {ui.testDriveBtn}
                         </button>
                         {isOwned ? (
                           <button
@@ -605,7 +770,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             }}
                             className="px-3 py-1.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold"
                           >
-                            Pristaviť
+                            {ui.deliverVehicleBtn}
                           </button>
                         ) : (
                           <button
@@ -615,7 +780,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             }}
                             className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono-num"
                           >
-                            Kúpiť ${spec.price.toLocaleString()}
+                            {ui.buyVehicleBtn} ${spec.price.toLocaleString()}
                           </button>
                         )}
                       </div>
@@ -633,32 +798,25 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   onClick={() => onSafehouseAction('rest')}
                   className="p-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
                 >
-                  Oddych (100% HP & Bez polície)
+                  {ui.restBtn}
                 </button>
                 <button
                   onClick={() => onSafehouseAction('save')}
                   className="p-3 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold"
                 >
-                  Uložiť hru
+                  {ui.saveLocalBtn}
                 </button>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Posunúť dennú dobu</div>
+                <div className="text-slate-300 font-semibold mb-1.5">{ui.advanceTimeTitle}</div>
                 <div className="grid grid-cols-4 gap-2">
-                  {(
-                    [
-                      { id: 'dawn', label: 'Ráno' },
-                      { id: 'noon', label: 'Poludnie' },
-                      { id: 'golden', label: 'Podvečer' },
-                      { id: 'night', label: 'Noc' },
-                    ] as Array<{ id: TimePreset; label: string }>
-                  ).map((p) => (
+                  {(['dawn', 'noon', 'golden', 'night'] as TimePreset[]).map((p) => (
                     <button
-                      key={p.id}
-                      onClick={() => onSafehouseAction('time', p.id)}
+                      key={p}
+                      onClick={() => onSafehouseAction('time', p)}
                       className="p-2 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-slate-100"
                     >
-                      {p.label}
+                      {getTimeLabel(p, lang)}
                     </button>
                   ))}
                 </div>

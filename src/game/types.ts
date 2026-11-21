@@ -38,6 +38,11 @@ export type VehicleTypeId =
 
 export type VehicleKind = 'car' | 'helicopter' | 'plane';
 export type ControlContextId = 'on_foot' | 'car' | 'helicopter' | 'plane' | 'jet';
+export type LanguageCode = 'en' | 'sk' | 'cs' | 'de' | 'es' | 'pl';
+export type InputDeviceType = 'keyboard' | 'playstation' | 'xbox' | 'touch';
+export type GamepadLayoutPreference = 'auto' | 'playstation' | 'xbox';
+export type PlatformType = 'pc' | 'mobile';
+export type UiModePreference = 'auto' | 'pc' | 'mobile';
 
 export type ControlActionId =
   | 'forward'
@@ -179,45 +184,204 @@ export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
   },
 };
 
-export function formatKeyCodeLabel(code: string): string {
+export function formatKeyCodeLabel(code: string, lang: LanguageCode = 'en'): string {
   if (!code) return '—';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
-  if (code === 'Space') return 'Medzerník';
-  if (code === 'ArrowUp') return 'Šípka ↑';
-  if (code === 'ArrowDown') return 'Šípka ↓';
-  if (code === 'ArrowLeft') return 'Šípka ←';
-  if (code === 'ArrowRight') return 'Šípka →';
+  if (code === 'Space') {
+    const spaceMap: Record<LanguageCode, string> = {
+      en: 'Space',
+      sk: 'Medzerník',
+      cs: 'Mezerník',
+      de: 'Leertaste',
+      es: 'Espacio',
+      pl: 'Spacja',
+    };
+    return spaceMap[lang];
+  }
+  const arrowPrefix: Record<LanguageCode, string> = {
+    en: 'Arrow',
+    sk: 'Šípka',
+    cs: 'Šipka',
+    de: 'Pfeil',
+    es: 'Flecha',
+    pl: 'Strzałka',
+  };
+  if (code === 'ArrowUp') return `${arrowPrefix[lang]} ↑`;
+  if (code === 'ArrowDown') return `${arrowPrefix[lang]} ↓`;
+  if (code === 'ArrowLeft') return `${arrowPrefix[lang]} ←`;
+  if (code === 'ArrowRight') return `${arrowPrefix[lang]} →`;
   return code;
 }
 
-export function formatPadCodeLabel(pad: GamepadInputCode | ''): string {
-  const map: Record<GamepadInputCode, string> = {
-    BTN_0: 'A / ×',
-    BTN_1: 'B / ○',
-    BTN_2: 'X / □',
-    BTN_3: 'Y / △',
-    BTN_4: 'LB / L1',
-    BTN_5: 'RB / R1',
-    BTN_6: 'LT / L2',
-    BTN_7: 'RT / R2',
-    BTN_8: 'Share / View',
-    BTN_9: 'Options / Start',
-    BTN_10: 'L3 (Ľavá páčka)',
-    BTN_11: 'R3 (Pravá páčka)',
+export function formatPadCodeLabel(
+  pad: GamepadInputCode | '',
+  device: 'playstation' | 'xbox' = 'playstation',
+  lang: LanguageCode = 'en',
+): string {
+  if (!pad) return '—';
+  const stickLabel: Record<LanguageCode, string> = {
+    en: 'Left Stick',
+    sk: 'Ľavá páčka',
+    cs: 'Levá páčka',
+    de: 'Linker Stick',
+    es: 'Stick Izq.',
+    pl: 'Lewy drążek',
+  };
+  const r3Label: Record<LanguageCode, string> = {
+    en: device === 'playstation' ? 'R3' : 'RS',
+    sk: device === 'playstation' ? 'R3' : 'RS',
+    cs: device === 'playstation' ? 'R3' : 'RS',
+    de: device === 'playstation' ? 'R3' : 'RS',
+    es: device === 'playstation' ? 'R3' : 'RS',
+    pl: device === 'playstation' ? 'R3' : 'RS',
+  };
+  const l3Label = device === 'playstation' ? 'L3' : 'LS';
+
+  if (device === 'playstation') {
+    const psMap: Record<GamepadInputCode, string> = {
+      BTN_0: '×',
+      BTN_1: '○',
+      BTN_2: '□',
+      BTN_3: '△',
+      BTN_4: 'L1',
+      BTN_5: 'R1',
+      BTN_6: 'L2',
+      BTN_7: 'R2',
+      BTN_8: 'Share',
+      BTN_9: 'Options',
+      BTN_10: l3Label,
+      BTN_11: r3Label[lang],
+      BTN_12: 'D-Pad ↑',
+      BTN_13: 'D-Pad ↓',
+      BTN_14: 'D-Pad ←',
+      BTN_15: 'D-Pad →',
+      BTN_16: 'PS',
+      BTN_17: 'Touchpad',
+      AXIS_LX_NEG: `${stickLabel[lang]} ←`,
+      AXIS_LX_POS: `${stickLabel[lang]} →`,
+      AXIS_LY_NEG: `${stickLabel[lang]} ↑`,
+      AXIS_LY_POS: `${stickLabel[lang]} ↓`,
+    };
+    return psMap[pad];
+  }
+
+  const xboxMap: Record<GamepadInputCode, string> = {
+    BTN_0: 'A',
+    BTN_1: 'B',
+    BTN_2: 'X',
+    BTN_3: 'Y',
+    BTN_4: 'LB',
+    BTN_5: 'RB',
+    BTN_6: 'LT',
+    BTN_7: 'RT',
+    BTN_8: 'View',
+    BTN_9: 'Menu',
+    BTN_10: l3Label,
+    BTN_11: r3Label[lang],
     BTN_12: 'D-Pad ↑',
     BTN_13: 'D-Pad ↓',
     BTN_14: 'D-Pad ←',
     BTN_15: 'D-Pad →',
-    BTN_16: 'PS Tlačidlo',
-    BTN_17: 'Touchpad (PS4/PS5)',
-    AXIS_LX_NEG: 'Ľavá páčka ←',
-    AXIS_LX_POS: 'Ľavá páčka →',
-    AXIS_LY_NEG: 'Ľavá páčka ↑',
-    AXIS_LY_POS: 'Ľavá páčka ↓',
+    BTN_16: 'Xbox',
+    BTN_17: 'Share',
+    AXIS_LX_NEG: `${stickLabel[lang]} ←`,
+    AXIS_LX_POS: `${stickLabel[lang]} →`,
+    AXIS_LY_NEG: `${stickLabel[lang]} ↑`,
+    AXIS_LY_POS: `${stickLabel[lang]} ↓`,
   };
-  return pad ? map[pad] : '—';
+  return xboxMap[pad];
+}
+
+export function getActiveBindingLabel(
+  ctx: ControlContextId,
+  action: ControlActionId,
+  device: InputDeviceType,
+  config: ControlsConfig,
+  lang: LanguageCode = 'en',
+): string {
+  if (device === 'touch') {
+    const touchLabels: Record<LanguageCode, Partial<Record<ControlActionId, string>>> = {
+      en: {
+        interact: 'Touch Button',
+        aim: 'AIM',
+        fire: 'FIRE',
+        jump: 'JUMP',
+        sprint: 'RUN',
+        handbrake: 'DRIFT',
+        radio: 'RADIO',
+        camera: 'CAM',
+        pitchUp: 'NOS ↑',
+        pitchDown: 'NOS ↓',
+      },
+      sk: {
+        interact: 'Tlačidlo na displeji',
+        aim: 'MIERIŤ',
+        fire: 'STRIEĽAŤ',
+        jump: 'SKOK',
+        sprint: 'ŠPRINT',
+        handbrake: 'DRIFT',
+        radio: 'RÁDIO',
+        camera: 'KAMERA',
+        pitchUp: 'NOS ↑',
+        pitchDown: 'NOS ↓',
+      },
+      cs: {
+        interact: 'Tlačítko na displeji',
+        aim: 'MÍŘIT',
+        fire: 'STŘÍLET',
+        jump: 'SKOK',
+        sprint: 'SPRINT',
+        handbrake: 'DRIFT',
+        radio: 'RÁDIO',
+        camera: 'KAMERA',
+        pitchUp: 'NOS ↑',
+        pitchDown: 'NOS ↓',
+      },
+      de: {
+        interact: 'Touch-Taste',
+        aim: 'ZIELEN',
+        fire: 'FEUERN',
+        jump: 'SPRUNG',
+        sprint: 'SPRINT',
+        handbrake: 'DRIFT',
+        radio: 'RADIO',
+        camera: 'KAMERA',
+        pitchUp: 'NASE ↑',
+        pitchDown: 'NASE ↓',
+      },
+      es: {
+        interact: 'Botón táctil',
+        aim: 'APUNTAR',
+        fire: 'FUEGO',
+        jump: 'SALTO',
+        sprint: 'CORRER',
+        handbrake: 'DRIFT',
+        radio: 'RADIO',
+        camera: 'CÁMARA',
+        pitchUp: 'MORRO ↑',
+        pitchDown: 'MORRO ↓',
+      },
+      pl: {
+        interact: 'Przycisk ekranowy',
+        aim: 'CELUJ',
+        fire: 'OGIEŃ',
+        jump: 'SKOK',
+        sprint: 'BIEG',
+        handbrake: 'DRIFT',
+        radio: 'RADIO',
+        camera: 'KAMERA',
+        pitchUp: 'NOS ↑',
+        pitchDown: 'NOS ↓',
+      },
+    };
+    return touchLabels[lang]?.[action] ?? touchLabels.en[action] ?? 'Touch';
+  }
+  const b = config[ctx]?.[action];
+  if (!b) return '—';
+  if (device === 'keyboard') return formatKeyCodeLabel(b.key, lang);
+  return formatPadCodeLabel(b.pad, device, lang);
 }
 
 export type HairStyleId = 'fade' | 'slick' | 'waves' | 'buzz';
@@ -574,6 +738,17 @@ export interface HudSnapshot {
   wasted: boolean;
   soundMuted: boolean;
   gamepadConnected: boolean;
+  activeInputDevice: InputDeviceType;
+  detectedGamepadType: 'playstation' | 'xbox';
+  gamepadLayoutPreference: GamepadLayoutPreference;
+  detectedPlatform: PlatformType;
+  uiModePreference: UiModePreference;
+  isMobileUi: boolean;
+  steeringSensitivity: number;
+  lookSensitivity: number;
+  language: LanguageCode;
+  cloudSyncId: string;
+  cloudLastSavedAt: string | null;
   controlsConfig: ControlsConfig;
   playerHandle: string;
   friends: string[];

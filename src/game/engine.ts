@@ -21,6 +21,13 @@ import {
 } from './roadNetwork';
 import { createProceduralTextures, ProceduralTexturePack } from './textures';
 import {
+  getLocalizedCharacterCopy,
+  getLocalizedMissionTitle,
+  getLocalizedRank,
+  getUi,
+  getWeatherLabel,
+} from './i18n';
+import {
   ActionBinding,
   ActiveMissionState,
   AiNpcFeedItem,
@@ -36,15 +43,19 @@ import {
   CutsceneViewState,
   DEFAULT_CONTROLS_CONFIG,
   GamepadInputCode,
-  getReputationRank,
+  GamepadLayoutPreference,
+  getActiveBindingLabel,
   GpsPoint,
   GslMissionTelemetry,
   HiddenMissionDef,
   HudSnapshot,
+  InputDeviceType,
+  LanguageCode,
   MinimapBlip,
   NeonColorId,
   NpcBehaviorState,
   PendingCoopInvite,
+  PlatformType,
   QualityLevel,
   RADIO_STATIONS,
   RadioStationId,
@@ -53,6 +64,7 @@ import {
   SHOPS,
   StoryMissionDef,
   TimePreset,
+  UiModePreference,
   VEHICLE_SPECS,
   VehicleTypeId,
   VehicleUpgradeState,
@@ -69,6 +81,7 @@ import {
 } from './world';
 
 const SAVE_KEY = 'sunstate_outlaws_save_v2';
+const CLOUD_SYNC_KEY = 'sunstate_cloud_sync_id';
 
 const WEATHER_LABELS_SK: Record<WeatherPreset, string> = {
   clear: 'Jasno',
@@ -286,9 +299,29 @@ export class GameEngine {
   private lastPointerY = 0;
   private pointerLocked = false;
   private gamepadConnected = false;
+  private activeInputDevice: InputDeviceType = 'keyboard';
+  private detectedGamepadType: 'playstation' | 'xbox' = 'playstation';
+  private gamepadLayoutPreference: GamepadLayoutPreference = 'auto';
+  private detectedPlatform: PlatformType = 'pc';
+  private uiModePreference: UiModePreference = 'auto';
+  private virtualMoveX = 0;
+  private virtualMoveY = 0;
+  private virtualActions: Partial<Record<ControlActionId, boolean>> = {};
+  private activeLookPointerId: number | null = null;
+  private lastTouchLookX = 0;
+  private lastTouchLookY = 0;
+  private lastTouchTime = 0;
+  private coarseMediaQuery: MediaQueryList | null = null;
+  private steeringSensitivity = 1.0;
+  private lookSensitivity = 1.0;
   private prevGamepadButtons: boolean[] = [];
   private controlsConfig: ControlsConfig = cloneDefaultControls();
   private cachedControlsSnapshot: ControlsConfig | null = null;
+
+  // Language & Cloud Sync (always boots in 'en' unless restored from Cloud Save)
+  private language: LanguageCode = 'en';
+  private cloudSyncId = '';
+  private cloudLastSavedAt: string | null = null;
 
   // Camera
   private cameraMode: CameraMode = 'third';
@@ -389,8 +422,8 @@ export class GameEngine {
   // AI Director & Interactive AI NPCs
   private aiDirectorStatus: 'idle' | 'active' | 'error' = 'idle';
   private aiDirectorError = '';
-  private aiBulletin = 'Palmetto Bay · Mestský AI dispečing pripravený.';
-  private aiPoliceTactic = 'Bežná hliadka obvodov PBPD';
+  private aiBulletin = 'Palmetto Bay · AI City Dispatch ready.';
+  private aiPoliceTactic = 'Standard PBPD district patrol';
   private aiDirectorTimer = 3.0;
   private aiDirectorInFlight = false;
   private recentWorldEvents: string[] = [];
@@ -410,8 +443,8 @@ export class GameEngine {
   private mission: ActiveMissionState = {
     activeId: null,
     isHidden: false,
-    title: 'Voľná jazda — Palmetto Bay',
-    objective: 'Preskúmaj mesto, otvor Mapu (M) alebo Mobil (T)',
+    title: getUi('en').freeRoamTitle,
+    objective: getUi('en').freeRoamObjective,
     targetX: null,
     targetY: null,
     targetZ: null,
@@ -431,7 +464,7 @@ export class GameEngine {
   private pendingInvite: PendingCoopInvite | null = null;
 
   // Notifications
-  private toastText = 'Vitaj v Palmetto Bay! Stlač M pre Mapu, T pre Mobil, G pre AI rozhovor s NPC.';
+  private toastText = getUi('en').welcomeToast;
   private toastTimer = 5;
   private toastType: 'info' | 'success' | 'warning' = 'info';
 
@@ -448,7 +481,13 @@ export class GameEngine {
     this.onGamepadUiAction = onGamepadUiAction;
     this.onOpenNpcChat = onOpenNpcChat;
     this.loadSavedState();
+    this.refreshPlatformDetection(true);
     this.init();
+    const savedSyncId = localStorage.getItem(CLOUD_SYNC_KEY);
+    if (savedSyncId && savedSyncId.trim()) {
+      this.cloudSyncId = savedSyncId.trim();
+      void this.loadFromCloud(this.cloudSyncId, true);
+    }
   }
 
   private get account(): CharacterAccount {
@@ -495,6 +534,26 @@ export class GameEngine {
       }
       if (Array.isArray(saved.friends)) this.friends = saved.friends;
       if (typeof saved.timeHour === 'number') this.timeHour = saved.timeHour;
+      if (typeof saved.steeringSensitivity === 'number') {
+        this.steeringSensitivity = THREE.MathUtils.clamp(saved.steeringSensitivity, 0.3, 2.5);
+      }
+      if (typeof saved.lookSensitivity === 'number') {
+        this.lookSensitivity = THREE.MathUtils.clamp(saved.lookSensitivity, 0.3, 2.5);
+      }
+      if (
+        saved.gamepadLayoutPreference === 'auto' ||
+        saved.gamepadLayoutPreference === 'playstation' ||
+        saved.gamepadLayoutPreference === 'xbox'
+      ) {
+        this.gamepadLayoutPreference = saved.gamepadLayoutPreference;
+      }
+      if (
+        saved.uiModePreference === 'auto' ||
+        saved.uiModePreference === 'pc' ||
+        saved.uiModePreference === 'mobile'
+      ) {
+        this.uiModePreference = saved.uiModePreference;
+      }
       if (saved.controlsConfig && typeof saved.controlsConfig === 'object') {
         const defaults = cloneDefaultControls();
         (Object.keys(defaults) as ControlContextId[]).forEach((ctx) => {
@@ -509,35 +568,278 @@ export class GameEngine {
     }
   }
 
+  private buildSerializableSaveData() {
+    if (!this.currentVehicle) {
+      this.account.savedX = this.playerX;
+      this.account.savedZ = this.playerZ;
+      this.account.savedYaw = this.playerYaw;
+    }
+    return {
+      characterId: this.characterId,
+      accounts: this.accounts,
+      completedStoryIds: this.completedStoryIds,
+      discoveredHiddenIds: this.discoveredHiddenIds,
+      completedHiddenIds: this.completedHiddenIds,
+      playerHandle: this.playerHandle,
+      friends: this.friends,
+      timeHour: this.timeHour,
+      steeringSensitivity: this.steeringSensitivity,
+      lookSensitivity: this.lookSensitivity,
+      gamepadLayoutPreference: this.gamepadLayoutPreference,
+      uiModePreference: this.uiModePreference,
+      controlsConfig: this.controlsConfig,
+    };
+  }
+
+  private applyRestoredSaveData(saved: any) {
+    if (!saved || typeof saved !== 'object') return;
+    if (saved.characterId === 'dante' || saved.characterId === 'elena' || saved.characterId === 'kairo') {
+      this.characterId = saved.characterId;
+    }
+    if (saved.accounts?.dante) {
+      this.accounts.dante = { ...createDefaultAccount('dante'), ...saved.accounts.dante };
+    }
+    if (saved.accounts?.elena) {
+      this.accounts.elena = { ...createDefaultAccount('elena'), ...saved.accounts.elena };
+    }
+    if (saved.accounts?.kairo) {
+      this.accounts.kairo = { ...createDefaultAccount('kairo'), ...saved.accounts.kairo };
+    }
+    (['dante', 'elena', 'kairo'] as CharacterId[]).forEach((cId) => {
+      if (!Array.isArray(this.accounts[cId].ownedVehicles) || this.accounts[cId].ownedVehicles.length === 0) {
+        this.accounts[cId].ownedVehicles = ['taxi'];
+      }
+    });
+    const activeAcc = this.accounts[this.characterId];
+    const activeProf = CHARACTERS[this.characterId];
+    this.playerX = typeof activeAcc.savedX === 'number' ? activeAcc.savedX : activeProf.homeSpawnX;
+    this.playerZ = typeof activeAcc.savedZ === 'number' ? activeAcc.savedZ : activeProf.homeSpawnZ;
+    this.playerYaw = typeof activeAcc.savedYaw === 'number' ? activeAcc.savedYaw : activeProf.homeSpawnYaw;
+    if (this.world) {
+      this.playerY = this.world.groundHeightAt(this.playerX, this.playerZ, 2);
+    }
+    this.camYaw = this.playerYaw + Math.PI;
+
+    if (Array.isArray(saved.completedStoryIds)) this.completedStoryIds = saved.completedStoryIds;
+    if (Array.isArray(saved.discoveredHiddenIds)) this.discoveredHiddenIds = saved.discoveredHiddenIds;
+    if (Array.isArray(saved.completedHiddenIds)) this.completedHiddenIds = saved.completedHiddenIds;
+    if (typeof saved.playerHandle === 'string' && saved.playerHandle.trim()) {
+      this.playerHandle = saved.playerHandle.trim();
+    }
+    if (Array.isArray(saved.friends)) this.friends = saved.friends;
+    if (typeof saved.timeHour === 'number') this.timeHour = saved.timeHour;
+    if (typeof saved.steeringSensitivity === 'number') {
+      this.steeringSensitivity = THREE.MathUtils.clamp(saved.steeringSensitivity, 0.3, 2.5);
+    }
+    if (typeof saved.lookSensitivity === 'number') {
+      this.lookSensitivity = THREE.MathUtils.clamp(saved.lookSensitivity, 0.3, 2.5);
+    }
+    if (
+      saved.gamepadLayoutPreference === 'auto' ||
+      saved.gamepadLayoutPreference === 'playstation' ||
+      saved.gamepadLayoutPreference === 'xbox'
+    ) {
+      this.gamepadLayoutPreference = saved.gamepadLayoutPreference;
+    }
+    if (
+      saved.uiModePreference === 'auto' ||
+      saved.uiModePreference === 'pc' ||
+      saved.uiModePreference === 'mobile'
+    ) {
+      this.uiModePreference = saved.uiModePreference;
+      this.refreshPlatformDetection(true);
+    }
+    if (saved.controlsConfig && typeof saved.controlsConfig === 'object') {
+      const defaults = cloneDefaultControls();
+      (Object.keys(defaults) as ControlContextId[]).forEach((ctx) => {
+        if (saved.controlsConfig[ctx]) {
+          defaults[ctx] = { ...defaults[ctx], ...saved.controlsConfig[ctx] };
+        }
+      });
+      this.controlsConfig = defaults;
+      this.cachedControlsSnapshot = null;
+    }
+    if (this.scene) {
+      if (this.currentVehicle) {
+        this.currentVehicle = null;
+      }
+      this.rebuildPlayerCharacter();
+      this.applyAtmosphere();
+    }
+  }
+
   public saveGameState(silent = false) {
     try {
-      if (!this.currentVehicle) {
-        this.account.savedX = this.playerX;
-        this.account.savedZ = this.playerZ;
-        this.account.savedYaw = this.playerYaw;
+      localStorage.setItem(SAVE_KEY, JSON.stringify(this.buildSerializableSaveData()));
+      if (!silent) {
+        this.showToast(
+          this.language === 'en' ? 'Progress saved locally!' : 'Postup hry bol úspešne uložený!',
+          'success',
+        );
       }
-      localStorage.setItem(
-        SAVE_KEY,
-        JSON.stringify({
-          characterId: this.characterId,
-          accounts: this.accounts,
-          completedStoryIds: this.completedStoryIds,
-          discoveredHiddenIds: this.discoveredHiddenIds,
-          completedHiddenIds: this.completedHiddenIds,
-          playerHandle: this.playerHandle,
-          friends: this.friends,
-          timeHour: this.timeHour,
-          controlsConfig: this.controlsConfig,
-        }),
-      );
-      if (!silent) this.showToast('Postup hry bol úspešne uložený!', 'success');
     } catch {
-      if (!silent) this.showToast('Nepodarilo sa uložiť do prehliadača', 'warning');
+      if (!silent) this.showToast('Local save failed', 'warning');
     }
+  }
+
+  public setLanguage(lang: LanguageCode) {
+    this.language = lang;
+    const ui = getUi(lang);
+    if (!this.mission.activeId) {
+      this.mission = {
+        ...this.mission,
+        title: ui.freeRoamTitle,
+        objective: ui.freeRoamObjective,
+      };
+    }
+    this.showToast(`${ui.languageLabel}: ${lang.toUpperCase()}`, 'info');
+    this.emitHud();
+  }
+
+  private detectMobilePlatform(): PlatformType {
+    if (typeof window === 'undefined') return 'pc';
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+    const isMobileUa =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(ua);
+    const hasCoarse = Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+    const hasFine = Boolean(window.matchMedia?.('(pointer: fine)')?.matches);
+    const touchPoints = typeof navigator !== 'undefined' ? navigator.maxTouchPoints || 0 : 0;
+    if (isMobileUa) return 'mobile';
+    if (hasCoarse && !hasFine) return 'mobile';
+    if (touchPoints > 0 && window.innerWidth <= 1024 && !hasFine) return 'mobile';
+    return 'pc';
+  }
+
+  private getIsMobileUi(): boolean {
+    if (this.uiModePreference === 'mobile') return true;
+    if (this.uiModePreference === 'pc') return false;
+    return this.detectedPlatform === 'mobile';
+  }
+
+  private refreshPlatformDetection(forceDeviceSync = false) {
+    this.detectedPlatform = this.detectMobilePlatform();
+    const mobileUi = this.getIsMobileUi();
+    if (mobileUi) {
+      if (forceDeviceSync || this.activeInputDevice === 'keyboard') {
+        this.activeInputDevice = 'touch';
+      }
+    } else if (this.activeInputDevice === 'touch') {
+      this.activeInputDevice = 'keyboard';
+    }
+  }
+
+  public setUiModePreference(pref: UiModePreference) {
+    this.uiModePreference = pref;
+    this.refreshPlatformDetection(true);
+    this.virtualMoveX = 0;
+    this.virtualMoveY = 0;
+    this.virtualActions = {};
+    this.saveGameState(true);
+    this.emitHud();
+  }
+
+  public setGamepadLayoutPreference(pref: GamepadLayoutPreference) {
+    this.gamepadLayoutPreference = pref;
+    if (this.activeInputDevice === 'playstation' || this.activeInputDevice === 'xbox') {
+      this.activeInputDevice = this.getEffectiveGamepadDevice();
+    }
+    this.saveGameState(true);
+    this.emitHud();
+  }
+
+  public setSteeringSensitivity(val: number) {
+    this.steeringSensitivity = THREE.MathUtils.clamp(Number(val) || 1.0, 0.3, 2.5);
+    this.saveGameState(true);
+    this.emitHud();
+  }
+
+  public setLookSensitivity(val: number) {
+    this.lookSensitivity = THREE.MathUtils.clamp(Number(val) || 1.0, 0.3, 2.5);
+    this.saveGameState(true);
+    this.emitHud();
+  }
+
+  public async saveToCloud(
+    syncIdInput: string,
+  ): Promise<{ ok: boolean; syncId?: string; savedAt?: string; error?: string }> {
+    const cleanId = syncIdInput.trim();
+    if (cleanId.length < 3) {
+      return { ok: false, error: 'Sync ID must be at least 3 characters.' };
+    }
+    const payload = {
+      syncId: cleanId,
+      language: this.language,
+      saveData: this.buildSerializableSaveData(),
+    };
+    const res = await this.safeFetchJson('/api/cloud-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.data?.ok) {
+      return { ok: false, error: String(res.data?.error || res.rawError || `HTTP ${res.status}`) };
+    }
+    this.cloudSyncId = String(res.data.syncId || cleanId);
+    this.cloudLastSavedAt = res.data.savedAt ? String(res.data.savedAt) : new Date().toISOString();
+    localStorage.setItem(CLOUD_SYNC_KEY, this.cloudSyncId);
+    this.saveGameState(true);
+    this.showToast(
+      `Cloud Save: ${this.cloudSyncId} (${this.language.toUpperCase()})`,
+      'success',
+    );
+    this.emitHud();
+    return { ok: true, syncId: this.cloudSyncId, savedAt: this.cloudLastSavedAt };
+  }
+
+  public async loadFromCloud(
+    syncIdInput: string,
+    silent = false,
+  ): Promise<{ ok: boolean; language?: LanguageCode; error?: string }> {
+    const cleanId = syncIdInput.trim();
+    if (cleanId.length < 3) {
+      return { ok: false, error: 'Sync ID must be at least 3 characters.' };
+    }
+    const res = await this.safeFetchJson(`/api/cloud-save/${encodeURIComponent(cleanId)}`);
+    if (!res.ok || !res.data?.ok || !res.data?.record) {
+      return { ok: false, error: String(res.data?.error || res.rawError || `HTTP ${res.status}`) };
+    }
+    const record = res.data.record;
+    const validLangs: LanguageCode[] = ['en', 'sk', 'cs', 'de', 'es', 'pl'];
+    const cloudLang: LanguageCode = validLangs.includes(record.language) ? record.language : 'en';
+    this.language = cloudLang;
+    this.applyRestoredSaveData(record.saveData);
+    this.cloudSyncId = String(record.syncId || cleanId);
+    this.cloudLastSavedAt = record.savedAt ? String(record.savedAt) : null;
+    localStorage.setItem(CLOUD_SYNC_KEY, this.cloudSyncId);
+    this.saveGameState(true);
+
+    const ui = getUi(this.language);
+    if (!this.mission.activeId) {
+      this.mission = {
+        ...this.mission,
+        title: ui.freeRoamTitle,
+        objective: ui.freeRoamObjective,
+      };
+    }
+    if (!silent) {
+      this.showToast(ui.cloudLoadedToast, 'success');
+    }
+    this.emitHud();
+    return { ok: true, language: cloudLang };
+  }
+
+  public unlinkCloud() {
+    localStorage.removeItem(CLOUD_SYNC_KEY);
+    this.cloudSyncId = '';
+    this.cloudLastSavedAt = null;
+    this.emitHud();
   }
 
   public resetAllProgress() {
     localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(CLOUD_SYNC_KEY);
+    this.cloudSyncId = '';
+    this.cloudLastSavedAt = null;
     this.accounts = {
       dante: createDefaultAccount('dante'),
       elena: createDefaultAccount('elena'),
@@ -572,7 +874,7 @@ export class GameEngine {
         resetVehicleDeformation(v.rig);
       }
     });
-    this.showToast('Celý postup bol vymazaný! Nový štart v Palmetto Bay.', 'info');
+    this.showToast(getUi(this.language).welcomeToast, 'info');
     this.emitHud();
   }
 
@@ -1246,24 +1548,68 @@ export class GameEngine {
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
 
     const canvas = this.renderer.domElement;
+    canvas.style.touchAction = 'none';
     canvas.addEventListener('mousedown', this.handleCanvasMouseDown);
+    canvas.addEventListener('pointerdown', this.handleCanvasPointerDown);
+    canvas.addEventListener('pointermove', this.handleCanvasPointerMove);
+    canvas.addEventListener('pointerup', this.handleCanvasPointerUp);
+    canvas.addEventListener('pointercancel', this.handleCanvasPointerUp);
     canvas.addEventListener('contextmenu', this.handleContextMenu);
     canvas.addEventListener('webglcontextlost', this.handleContextLost);
+
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      this.coarseMediaQuery = window.matchMedia('(pointer: coarse)');
+      this.coarseMediaQuery.addEventListener('change', this.handlePointerMediaChange);
+    }
+  }
+
+  private handlePointerMediaChange = () => {
+    this.refreshPlatformDetection(false);
+    this.emitHud();
+  };
+
+  private detectGamepadBrand(pad: Gamepad): 'playstation' | 'xbox' {
+    const id = String(pad.id || '');
+    if (/xbox|xinput|microsoft|045e|360|one|series/i.test(id)) return 'xbox';
+    return 'playstation';
+  }
+
+  private getEffectiveGamepadDevice(): 'playstation' | 'xbox' {
+    if (this.gamepadLayoutPreference !== 'auto') return this.gamepadLayoutPreference;
+    return this.detectedGamepadType;
+  }
+
+  private markInputDevice(dev: InputDeviceType) {
+    if (this.activeInputDevice !== dev) {
+      this.activeInputDevice = dev;
+      this.emitHud();
+    }
   }
 
   private handleGamepadChange = () => {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    this.gamepadConnected = Array.from(pads).some((p) => Boolean(p && p.connected));
+    const connectedPad = Array.from(pads).find((p) => Boolean(p && p.connected)) ?? null;
+    this.gamepadConnected = Boolean(connectedPad);
+    if (connectedPad) {
+      this.detectedGamepadType = this.detectGamepadBrand(connectedPad);
+    } else if (this.activeInputDevice === 'playstation' || this.activeInputDevice === 'xbox') {
+      this.activeInputDevice = this.getIsMobileUi() ? 'touch' : 'keyboard';
+    }
     this.emitHud();
   };
 
   private handleResize = () => {
     if (this.disposed) return;
+    const prevMobile = this.getIsMobileUi();
+    this.refreshPlatformDetection(false);
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    if (prevMobile !== this.getIsMobileUi()) {
+      this.emitHud();
+    }
   };
 
   private handleContextLost = (e: Event) => {
@@ -1283,18 +1629,74 @@ export class GameEngine {
     this.mouseDown = false;
     this.mouseAiming = false;
     this.isDraggingLook = false;
+    this.activeLookPointerId = null;
+    this.virtualMoveX = 0;
+    this.virtualMoveY = 0;
+    this.virtualActions = {};
     this.keys = {};
   };
 
-  private handleCanvasMouseDown = (e: MouseEvent) => {
+  private handleCanvasPointerDown = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    this.lastTouchTime = performance.now();
+    this.markInputDevice('touch');
+    this.sound.unlock();
     if (this.paused || this.startupMode || this.cutscene) return;
+    if (this.activeLookPointerId === null) {
+      this.activeLookPointerId = e.pointerId;
+      this.lastTouchLookX = e.clientX;
+      this.lastTouchLookY = e.clientY;
+      this.isDraggingLook = true;
+      try {
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore capture failures
+      }
+    }
+  };
+
+  private handleCanvasPointerMove = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    this.lastTouchTime = performance.now();
+    if (this.paused || this.startupMode || this.cutscene) return;
+    if (e.pointerId !== this.activeLookPointerId) return;
+    const dx = e.clientX - this.lastTouchLookX;
+    const dy = e.clientY - this.lastTouchLookY;
+    this.lastTouchLookX = e.clientX;
+    this.lastTouchLookY = e.clientY;
+    if (dx === 0 && dy === 0) return;
+
+    const adsSens = (this.isAiming && !this.currentVehicle ? 0.56 : 1.0) * this.lookSensitivity;
+    this.camYaw -= dx * 0.0046 * adsSens;
+    this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0034 * adsSens, -0.58, 1.05);
+    this.manualLookCooldown = 0.85;
+  };
+
+  private handleCanvasPointerUp = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    this.lastTouchTime = performance.now();
+    if (e.pointerId === this.activeLookPointerId) {
+      this.activeLookPointerId = null;
+      this.isDraggingLook = this.mouseDown || this.mouseAiming;
+      try {
+        this.renderer.domElement.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignore
+      }
+    }
+  };
+
+  private handleCanvasMouseDown = (e: MouseEvent) => {
+    if (performance.now() - this.lastTouchTime < 750) return;
+    if (this.paused || this.startupMode || this.cutscene) return;
+    this.markInputDevice('keyboard');
     this.sound.unlock();
     if (e.button === 0) {
       this.mouseDown = true;
       this.isDraggingLook = true;
       this.lastPointerX = e.clientX;
       this.lastPointerY = e.clientY;
-      if (!this.pointerLocked && this.renderer.domElement.requestPointerLock) {
+      if (!this.pointerLocked && !this.getIsMobileUi() && this.renderer.domElement.requestPointerLock) {
         try {
           const p = this.renderer.domElement.requestPointerLock() as unknown;
           if (p && typeof (p as Promise<void>).catch === 'function') {
@@ -1327,10 +1729,11 @@ export class GameEngine {
       this.mouseDown = false;
       this.mouseAiming = false;
     }
-    this.isDraggingLook = this.mouseDown || this.mouseAiming;
+    this.isDraggingLook = this.mouseDown || this.mouseAiming || this.activeLookPointerId !== null;
   };
 
   private handleMouseMove = (e: MouseEvent) => {
+    if (performance.now() - this.lastTouchTime < 750) return;
     if (this.paused || this.startupMode || this.cutscene) return;
     const dx = this.pointerLocked ? e.movementX : this.isDraggingLook ? e.clientX - this.lastPointerX : 0;
     const dy = this.pointerLocked ? e.movementY : this.isDraggingLook ? e.clientY - this.lastPointerY : 0;
@@ -1339,19 +1742,22 @@ export class GameEngine {
       this.lastPointerY = e.clientY;
     }
     if (dx === 0 && dy === 0) return;
+    if (Math.abs(dx) + Math.abs(dy) >= 2) {
+      this.markInputDevice('keyboard');
+    }
 
     // In Plane/Jet: pulling mouse down raises nose & climbs!
     if (this.currentVehicle && VEHICLE_SPECS[this.currentVehicle.type].kind === 'plane') {
       this.currentVehicle.pitch = THREE.MathUtils.clamp(
-        this.currentVehicle.pitch + dy * 0.0022,
+        this.currentVehicle.pitch + dy * 0.0022 * this.steeringSensitivity,
         -0.78,
         0.78,
       );
-      this.currentVehicle.yaw -= dx * 0.0018;
+      this.currentVehicle.yaw -= dx * 0.0018 * this.steeringSensitivity;
       return;
     }
 
-    const adsSens = this.isAiming && !this.currentVehicle ? 0.56 : 1.0;
+    const adsSens = (this.isAiming && !this.currentVehicle ? 0.56 : 1.0) * this.lookSensitivity;
     this.camYaw -= dx * 0.0032 * adsSens;
     this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0024 * adsSens, -0.58, 1.05);
     this.manualLookCooldown = 0.85;
@@ -1359,6 +1765,7 @@ export class GameEngine {
 
   private handleWheel = (e: WheelEvent) => {
     if (this.paused || this.currentVehicle || this.startupMode) return;
+    this.markInputDevice('keyboard');
     const order: WeaponId[] = (['fists', 'pistol', 'smg'] as WeaponId[]).filter(
       (w) => this.account.unlockedWeapons[w],
     );
@@ -1428,9 +1835,79 @@ export class GameEngine {
     return 0;
   }
 
+  public setVirtualJoystick(x: number, y: number) {
+    this.lastTouchTime = performance.now();
+    this.sound.unlock();
+    this.markInputDevice('touch');
+    this.virtualMoveX = THREE.MathUtils.clamp(x, -1, 1);
+    this.virtualMoveY = THREE.MathUtils.clamp(y, -1, 1);
+  }
+
+  public setVirtualAction(action: ControlActionId, active: boolean) {
+    this.lastTouchTime = performance.now();
+    this.sound.unlock();
+    this.markInputDevice('touch');
+    const wasActive = Boolean(this.virtualActions[action]);
+    this.virtualActions[action] = active;
+
+    if (active && !wasActive && !this.paused && !this.startupMode && !this.cutscene) {
+      if (action === 'fire' && !this.wasted) {
+        if (this.currentVehicle) this.tryFireVehicleAction();
+        else this.tryFireWeapon();
+      } else if (action === 'interact') {
+        this.handleInteractOrVehicle();
+      } else if (
+        action === 'jump' &&
+        !this.currentVehicle &&
+        !this.onGround &&
+        this.account.hasParachute &&
+        !this.parachuteOpen
+      ) {
+        this.parachuteOpen = true;
+        this.playerRig.parachuteCanopy.visible = true;
+        this.showToast('Parachute opened!', 'info');
+      }
+    }
+  }
+
+  public triggerVirtualDiscrete(
+    kind: 'interact' | 'camera' | 'radio' | 'weapon_next' | 'npc_talk' | 'parachute',
+  ) {
+    this.lastTouchTime = performance.now();
+    this.sound.unlock();
+    this.markInputDevice('touch');
+    if (this.paused || this.startupMode || this.cutscene) return;
+    if (kind === 'interact') {
+      this.handleInteractOrVehicle();
+    } else if (kind === 'camera') {
+      this.toggleCameraMode();
+    } else if (kind === 'radio') {
+      this.cycleRadioStation();
+    } else if (kind === 'npc_talk') {
+      if (!this.currentVehicle && !this.wasted) this.interactWithNearbyNpc();
+    } else if (kind === 'weapon_next' && !this.currentVehicle) {
+      const order: WeaponId[] = (['fists', 'pistol', 'smg'] as WeaponId[]).filter(
+        (w) => this.account.unlockedWeapons[w],
+      );
+      const idx = order.indexOf(this.weaponId);
+      this.setWeapon(order[(idx + 1) % order.length]);
+    } else if (
+      kind === 'parachute' &&
+      !this.currentVehicle &&
+      !this.onGround &&
+      this.account.hasParachute &&
+      !this.parachuteOpen
+    ) {
+      this.parachuteOpen = true;
+      this.playerRig.parachuteCanopy.visible = true;
+      this.showToast('Parachute opened!', 'info');
+    }
+  }
+
   private isActionHeld(ctx: ControlContextId, action: ControlActionId, pad: Gamepad | null): number {
     const bind = this.controlsConfig[ctx]?.[action];
     let val = bind?.key && this.keys[bind.key] ? 1 : 0;
+    if (this.virtualActions[action]) val = 1;
     if (pad && bind?.pad) {
       val = Math.max(val, this.getGamepadAxisValue(pad, bind.pad));
     }
@@ -1454,6 +1931,7 @@ export class GameEngine {
   }
 
   private handleKeyDown = (e: KeyboardEvent) => {
+    this.markInputDevice('keyboard');
     if (this.cutscene) {
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
@@ -1497,7 +1975,7 @@ export class GameEngine {
     ) {
       this.parachuteOpen = true;
       this.playerRig.parachuteCanopy.visible = true;
-      this.showToast('Padák otvorený!', 'info');
+      this.showToast('Parachute opened!', 'info');
     } else if (code === 'Digit1') {
       this.setWeapon('fists');
     } else if (code === 'Digit2') {
@@ -1525,10 +2003,14 @@ export class GameEngine {
     if (!pad) {
       if (this.gamepadConnected) {
         this.gamepadConnected = false;
+        if (this.activeInputDevice === 'playstation' || this.activeInputDevice === 'xbox') {
+          this.activeInputDevice = this.getIsMobileUi() ? 'touch' : 'keyboard';
+        }
         this.emitHud();
       }
       return { pad: null, fire: false };
     }
+    this.detectedGamepadType = this.detectGamepadBrand(pad);
     if (!this.gamepadConnected) {
       this.gamepadConnected = true;
       this.emitHud();
@@ -1537,6 +2019,13 @@ export class GameEngine {
     const deadzone = (v: number) => (Math.abs(v) < 0.16 ? 0 : v);
     const rx = deadzone(pad.axes[2] ?? 0);
     const ry = deadzone(pad.axes[3] ?? 0);
+    const lx = deadzone(pad.axes[0] ?? 0);
+    const ly = deadzone(pad.axes[1] ?? 0);
+
+    const anyPadBtn = pad.buttons.some((b) => b.pressed || (b.value ?? 0) > 0.25);
+    if (anyPadBtn || Math.abs(rx) > 0.2 || Math.abs(ry) > 0.2 || Math.abs(lx) > 0.25 || Math.abs(ly) > 0.25) {
+      this.markInputDevice(this.getEffectiveGamepadDevice());
+    }
 
     const pressed = (idx: number) => Boolean(pad.buttons[idx]?.pressed);
     const justPressed = (idx: number) => pressed(idx) && !this.prevGamepadButtons[idx];
@@ -1579,14 +2068,17 @@ export class GameEngine {
     ) {
       this.parachuteOpen = true;
       this.playerRig.parachuteCanopy.visible = true;
-      this.showToast('Padák otvorený!', 'info');
+      this.showToast('Parachute opened!', 'info');
     }
 
     if (justPressed(9)) this.onGamepadUiAction?.('settings');
+    if (justPressed(10) && !this.currentVehicle && !this.wasted && this.findClosestInteractableNpc()) {
+      this.interactWithNearbyNpc();
+    }
     if (justPressed(12)) this.onGamepadUiAction?.('phone');
     if (justPressed(13)) this.onGamepadUiAction?.('map');
     if (justPressed(17)) {
-      // PS4/PS5 Touchpad: toggles camera or opens map when double-used
+      // PS4/PS5 Touchpad: toggles camera
       this.toggleCameraMode();
     }
     if (justPressed(15) && !this.currentVehicle) {
@@ -1598,9 +2090,9 @@ export class GameEngine {
       this.setWeapon(order[(idx + 1) % order.length]);
     }
 
-    // Right Stick Look (finer precision when ADS aiming on foot)
+    // Right Stick Look (with Look Sensitivity & ADS scaling)
     if (rx !== 0 || ry !== 0) {
-      const adsScale = this.isAiming && !this.currentVehicle ? 0.58 : 1.0;
+      const adsScale = (this.isAiming && !this.currentVehicle ? 0.58 : 1.0) * this.lookSensitivity;
       this.camYaw -= rx * dt * 2.5 * adsScale;
       this.camPitch = THREE.MathUtils.clamp(this.camPitch + ry * dt * 1.8 * adsScale, -0.58, 1.05);
       this.manualLookCooldown = 0.85;
@@ -2217,11 +2709,12 @@ export class GameEngine {
     this.activeStoryDef = null;
     this.activeHiddenId = null;
     this.gslState = { active: false, vanId: null, packageDamage: 0, onRoad: true, graceTimer: 0 };
+    const ui = getUi(this.language);
     this.mission = {
       activeId: null,
       isHidden: false,
-      title: 'Voľná jazda — Palmetto Bay',
-      objective: 'Preskúmaj mesto, otvor Mapu (M) alebo Mobil (T)',
+      title: ui.freeRoamTitle,
+      objective: ui.freeRoamObjective,
       targetX: null,
       targetY: null,
       targetZ: null,
@@ -2871,10 +3364,15 @@ export class GameEngine {
       this.isAiming =
         !this.currentVehicle &&
         !this.wasted &&
-        (this.mouseAiming || this.isActionHeld('on_foot', 'aim', gp.pad) > 0.35);
+        (this.mouseAiming ||
+          Boolean(this.virtualActions.aim) ||
+          this.isActionHeld('on_foot', 'aim', gp.pad) > 0.35);
 
       if (
-        (this.mouseDown || this.isActionHeld(ctxNow, 'fire', gp.pad) > 0.35 || gp.fire) &&
+        (this.mouseDown ||
+          Boolean(this.virtualActions.fire) ||
+          this.isActionHeld(ctxNow, 'fire', gp.pad) > 0.35 ||
+          gp.fire) &&
         !this.wasted
       ) {
         if (this.currentVehicle) {
@@ -3178,14 +3676,18 @@ export class GameEngine {
     const pad = gp.pad;
     let f =
       this.isActionHeld('on_foot', 'forward', pad) -
-      this.isActionHeld('on_foot', 'backward', pad);
+      this.isActionHeld('on_foot', 'backward', pad) +
+      this.virtualMoveY;
     let r =
       this.isActionHeld('on_foot', 'right', pad) -
-      this.isActionHeld('on_foot', 'left', pad);
+      this.isActionHeld('on_foot', 'left', pad) +
+      this.virtualMoveX;
     if (this.keys['ArrowUp']) f = Math.max(f, 1);
     if (this.keys['ArrowDown']) f = Math.min(f, -1);
     if (this.keys['ArrowRight']) r = Math.max(r, 1);
     if (this.keys['ArrowLeft']) r = Math.min(r, -1);
+    f = THREE.MathUtils.clamp(f, -1, 1);
+    r = THREE.MathUtils.clamp(r, -1, 1);
 
     const sprinting = !this.isAiming && this.isActionHeld('on_foot', 'sprint', pad) > 0.35;
     const staminaMult = 1 + (this.account.skills.stamina / 100) * 0.28;
@@ -3205,7 +3707,8 @@ export class GameEngine {
       let diff = targetYaw - this.playerYaw;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.playerYaw += diff * Math.min(1, dt * (this.isAiming ? 18 : 13));
+      const turnRate = (this.isAiming ? 18 : 13) * (0.65 + 0.35 * this.steeringSensitivity);
+      this.playerYaw += diff * Math.min(1, dt * turnRate);
 
       // Camera follows character smoothly when turning or moving (unless aiming or actively looking around)
       const steppingStraightBack = nf < -0.35 && Math.abs(nr) < 0.15;
@@ -3359,8 +3862,11 @@ export class GameEngine {
     const spec = VEHICLE_SPECS[v.type];
     let throttle = this.isActionHeld(ctx, 'forward', pad);
     let brake = this.isActionHeld(ctx, 'backward', pad);
-    let steer =
-      this.isActionHeld(ctx, 'left', pad) - this.isActionHeld(ctx, 'right', pad);
+    let steer = THREE.MathUtils.clamp(
+      this.isActionHeld(ctx, 'left', pad) - this.isActionHeld(ctx, 'right', pad) - this.virtualMoveX,
+      -1,
+      1,
+    );
 
     if (spec.kind === 'car') {
       if (this.keys['ArrowUp']) throttle = Math.max(throttle, 1);
@@ -3370,15 +3876,19 @@ export class GameEngine {
     }
 
     if (spec.kind === 'helicopter') {
-      // Helicopter Flight Physics with Custom/GTA V Bindings
+      // Helicopter Flight Physics with Custom/GTA V Bindings & Steering Sensitivity
       this.gainSkill('flying', dt * 0.5);
       v.rotorSpeed = 24;
       const rudderYaw =
         this.isActionHeld(ctx, 'yawLeft', pad) - this.isActionHeld(ctx, 'yawRight', pad);
-      v.yaw += (steer * 0.65 + rudderYaw * 0.95) * spec.turnSpeed * dt;
+      v.yaw += (steer * 0.65 + rudderYaw * 0.95) * spec.turnSpeed * this.steeringSensitivity * dt;
 
-      const forwardTilt =
-        this.isActionHeld(ctx, 'pitchDown', pad) - this.isActionHeld(ctx, 'pitchUp', pad);
+      const stickTilt = Math.abs(this.virtualMoveY) > 0.08 ? this.virtualMoveY : 0;
+      const forwardTilt = THREE.MathUtils.clamp(
+        this.isActionHeld(ctx, 'pitchDown', pad) - this.isActionHeld(ctx, 'pitchUp', pad) + stickTilt,
+        -1,
+        1,
+      );
       const lift = throttle - brake;
       v.vy = THREE.MathUtils.damp(v.vy, lift * 20, 4, dt);
 
@@ -3392,18 +3902,27 @@ export class GameEngine {
       v.roll = THREE.MathUtils.damp(v.roll, -steer * 0.3, 5, dt);
     } else if (spec.kind === 'plane') {
       // Airplane & Fighter Jet Physics:
-      // Pulling stick DOWN (pitchUp) raises nose UP & climbs (+v.pitch)!
-      // Pushing stick UP (pitchDown) drops nose DOWN & dives (-v.pitch)!
+      // Pulling stick DOWN (pitchUp / virtualMoveY < 0) raises nose UP & climbs (+v.pitch)!
+      // Pushing stick UP (pitchDown / virtualMoveY > 0) drops nose DOWN & dives (-v.pitch)!
       this.gainSkill('flying', dt * 0.6);
       const fwdSpeed = v.vx * Math.sin(v.yaw) + v.vz * Math.cos(v.yaw);
       const curSpeed = Math.max(0, fwdSpeed);
       let nextSpeed = curSpeed + (throttle * spec.accel - brake * spec.braking - 2.2) * dt;
       nextSpeed = THREE.MathUtils.clamp(nextSpeed, 0, spec.maxSpeed);
 
-      const pitchInput =
-        this.isActionHeld(ctx, 'pitchUp', pad) - this.isActionHeld(ctx, 'pitchDown', pad);
+      const pitchInput = THREE.MathUtils.clamp(
+        this.isActionHeld(ctx, 'pitchUp', pad) -
+          this.isActionHeld(ctx, 'pitchDown', pad) -
+          this.virtualMoveY,
+        -1,
+        1,
+      );
       if (Math.abs(pitchInput) > 0.04) {
-        v.pitch = THREE.MathUtils.clamp(v.pitch + pitchInput * 1.18 * dt, -0.78, 0.78);
+        v.pitch = THREE.MathUtils.clamp(
+          v.pitch + pitchInput * 1.18 * this.steeringSensitivity * dt,
+          -0.78,
+          0.78,
+        );
       } else {
         v.pitch = THREE.MathUtils.damp(v.pitch, 0, 1.5, dt);
       }
@@ -3413,6 +3932,7 @@ export class GameEngine {
       v.yaw +=
         (steer + rudderYaw * 0.7) *
         spec.turnSpeed *
+        this.steeringSensitivity *
         (0.4 + Math.min(0.85, nextSpeed / 35)) *
         dt;
       const targetRoll = -steer * 0.68 * Math.min(1, nextSpeed / 24);
@@ -3504,7 +4024,7 @@ export class GameEngine {
       const speedFactor = Math.min(1, Math.abs(forwardSpeed) / 7.5);
       const reverseSign = forwardSpeed >= -0.4 ? 1 : -1;
       v.steerAngle = THREE.MathUtils.damp(v.steerAngle, steer * 0.45, 10, dt);
-      v.yaw += steer * spec.turnSpeed * handlingBonus * speedFactor * reverseSign * dt;
+      v.yaw += steer * spec.turnSpeed * handlingBonus * this.steeringSensitivity * speedFactor * reverseSign * dt;
 
       const nfx = Math.sin(v.yaw);
       const nfz = Math.cos(v.yaw);
@@ -4778,6 +5298,42 @@ export class GameEngine {
     this.onOpenNpcChat?.({ id: npc.id, name: npc.name, role: npc.role, mood: npc.mood });
   }
 
+  private async safeFetchJson(
+    url: string,
+    options?: RequestInit,
+  ): Promise<{ ok: boolean; status: number; data: any; rawError?: string }> {
+    try {
+      const resp = await fetch(url, options);
+      const rawText = await resp.text();
+      if (!rawText || !rawText.trim()) {
+        return {
+          ok: false,
+          status: resp.status,
+          data: null,
+          rawError: `Empty response (${resp.status})`,
+        };
+      }
+      try {
+        const parsed = JSON.parse(rawText);
+        return { ok: resp.ok, status: resp.status, data: parsed };
+      } catch {
+        return {
+          ok: false,
+          status: resp.status,
+          data: null,
+          rawError: `Server unavailable (${resp.status})`,
+        };
+      }
+    } catch (err: any) {
+      return {
+        ok: false,
+        status: 0,
+        data: null,
+        rawError: err?.message || 'Network error',
+      };
+    }
+  }
+
   private async updateAiDirector(dt: number) {
     this.aiDirectorTimer -= dt;
     if (this.aiDirectorTimer > 0 || this.aiDirectorInFlight) return;
@@ -4813,12 +5369,13 @@ export class GameEngine {
       const speedKmh = this.currentVehicle
         ? Math.round(Math.hypot(this.currentVehicle.vx, this.currentVehicle.vz) * 3.6)
         : 0;
-      const resp = await fetch('/api/ai/npc-director', {
+      const res = await this.safeFetchJson('/api/ai/npc-director', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          language: this.language,
           weatherPreset: this.weatherPreset,
-          weatherLabel: WEATHER_LABELS_SK[this.weatherPreset],
+          weatherLabel: getWeatherLabel(this.weatherPreset, this.language),
           timeHour: this.timeHour,
           wantedStars: this.wantedStars,
           characterName: CHARACTERS[this.characterId].name,
@@ -4831,13 +5388,13 @@ export class GameEngine {
           nearbyNpcs: nearbyPayload,
         }),
       });
-      const data = await resp.json();
-      if (!resp.ok) {
+      if (!res.ok || !res.data) {
         this.aiDirectorStatus = 'error';
-        this.aiDirectorError = String(data?.error || `HTTP ${resp.status}`);
+        this.aiDirectorError = String(res.data?.error || res.rawError || `HTTP ${res.status}`);
         return;
       }
 
+      const data = res.data;
       this.aiDirectorStatus = 'active';
       this.aiDirectorError = '';
       if (data.bulletin) this.aiBulletin = String(data.bulletin);
@@ -4855,7 +5412,7 @@ export class GameEngine {
       }
     } catch (err: any) {
       this.aiDirectorStatus = 'error';
-      this.aiDirectorError = err?.message || 'Nepodarilo sa spojiť s AI režisérom.';
+      this.aiDirectorError = err?.message || 'AI Dispatch connection failed.';
     } finally {
       this.aiDirectorInFlight = false;
     }
@@ -4877,50 +5434,47 @@ export class GameEngine {
       }
     }
 
-    try {
-      const resp = await fetch('/api/ai/npc-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          speakerType: target === 'copilot' ? 'copilot' : 'npc',
-          npcName: target === 'copilot' ? 'Palmetto AI' : target.npcName,
-          npcRole: target === 'copilot' ? 'Taktický AI asistent' : target.npcRole,
-          npcMood: target === 'copilot' ? 'sústredený' : target.npcMood,
-          playerMessage,
-          context: {
-            characterName: CHARACTERS[this.characterId].name,
-            weatherLabel: WEATHER_LABELS_SK[this.weatherPreset],
-            timeHour: this.timeHour,
-            wantedStars: this.wantedStars,
-            cash: this.account.cash,
-            activeMission: this.mission.title,
-            nearbyLandmark: nearestLandmark,
-          },
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        return { reply: '', error: String(data?.error || `Chyba AI (${resp.status})`) };
-      }
-
-      if (target !== 'copilot') {
-        const npc = this.npcs.find((n) => n.id === target.npcId);
-        if (npc && !npc.dead) {
-          if (data.newBehavior) npc.behavior = data.newBehavior as NpcBehaviorState;
-          if (data.mood) npc.mood = String(data.mood);
-          npc.reactionLine = String(data.reply || '').slice(0, 85);
-          npc.behaviorTimer = 14;
-        }
-      }
-
-      return {
-        reply: String(data.reply || ''),
-        mood: data.mood ? String(data.mood) : undefined,
-        tip: data.tip ? String(data.tip) : undefined,
-      };
-    } catch (err: any) {
-      return { reply: '', error: err?.message || 'Zlyhalo sieťové spojenie s AI.' };
+    const res = await this.safeFetchJson('/api/ai/npc-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        language: this.language,
+        speakerType: target === 'copilot' ? 'copilot' : 'npc',
+        npcName: target === 'copilot' ? 'Palmetto AI' : target.npcName,
+        npcRole: target === 'copilot' ? 'Tactical AI Assistant' : target.npcRole,
+        npcMood: target === 'copilot' ? 'focused' : target.npcMood,
+        playerMessage,
+        context: {
+          characterName: CHARACTERS[this.characterId].name,
+          weatherLabel: getWeatherLabel(this.weatherPreset, this.language),
+          timeHour: this.timeHour,
+          wantedStars: this.wantedStars,
+          cash: this.account.cash,
+          activeMission: this.mission.title,
+          nearbyLandmark: nearestLandmark,
+        },
+      }),
+    });
+    if (!res.ok || !res.data) {
+      return { reply: '', error: String(res.data?.error || res.rawError || `AI Error (${res.status})`) };
     }
+
+    const data = res.data;
+    if (target !== 'copilot') {
+      const npc = this.npcs.find((n) => n.id === target.npcId);
+      if (npc && !npc.dead) {
+        if (data.newBehavior) npc.behavior = data.newBehavior as NpcBehaviorState;
+        if (data.mood) npc.mood = String(data.mood);
+        npc.reactionLine = String(data.reply || '').slice(0, 85);
+        npc.behaviorTimer = 14;
+      }
+    }
+
+    return {
+      reply: String(data.reply || ''),
+      mood: data.mood ? String(data.mood) : undefined,
+      tip: data.tip ? String(data.tip) : undefined,
+    };
   }
 
   public async generateAndStartAiMission(
@@ -4929,79 +5483,172 @@ export class GameEngine {
     const locations = [
       ...SHOPS.map((s) => ({ name: s.name, kind: s.category, x: s.x, z: s.z })),
       ...this.world.network.nodes.slice(0, 20).map((n) => ({
-        name: n.name || `Križovatka #${n.id}`,
+        name: n.name || `Junction #${n.id}`,
         kind: 'road_node',
         x: n.x,
         z: n.z,
       })),
     ];
 
-    try {
-      const resp = await fetch('/api/ai/generate-mission', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme, locations }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data?.mission) {
-        return { ok: false, error: String(data?.error || 'AI misia sa nepodarila vytvoriť.') };
-      }
-      const m = data.mission as StoryMissionDef & { recommendedWeather?: WeatherPreset };
-      if (m.recommendedWeather) {
-        this.targetWeatherPreset = m.recommendedWeather;
-      }
-      this.launchStoryMissionDef(m);
-      return { ok: true, title: m.title };
-    } catch (err: any) {
-      return { ok: false, error: err?.message || 'Chyba spojenia pri generovaní misie.' };
+    const res = await this.safeFetchJson('/api/ai/generate-mission', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme, locations, language: this.language }),
+    });
+    if (!res.ok || !res.data?.mission) {
+      return {
+        ok: false,
+        error: String(res.data?.error || res.rawError || 'Failed to generate AI mission.'),
+      };
     }
+    const m = res.data.mission as StoryMissionDef & { recommendedWeather?: WeatherPreset };
+    if (m.recommendedWeather) {
+      this.targetWeatherPreset = m.recommendedWeather;
+    }
+    this.launchStoryMissionDef(m);
+    return { ok: true, title: m.title };
+  }
+
+  private getSingleFireLabel(ctx: ControlContextId): string {
+    if (this.activeInputDevice === 'keyboard') {
+      return this.language === 'sk' || this.language === 'cs'
+        ? 'Ľavý klik'
+        : this.language === 'de'
+          ? 'Linksklick'
+          : this.language === 'es'
+            ? 'Clic Izq.'
+            : this.language === 'pl'
+              ? 'Lewy klik'
+              : 'Left Click';
+    }
+    return getActiveBindingLabel(ctx, 'fire', this.activeInputDevice, this.controlsConfig, this.language);
+  }
+
+  private getSingleNpcTalkLabel(): string {
+    if (this.activeInputDevice === 'touch') return getUi(this.language).touchTalk;
+    if (this.activeInputDevice === 'keyboard') return 'G';
+    if (this.activeInputDevice === 'playstation') return 'L3';
+    return 'LS';
   }
 
   private getContextualPrompt(nearbyShop: ShopLocation | null, insideShop: ShopLocation | null): string {
+    const dev = this.activeInputDevice;
+    const lang = this.language;
+    const ctx = this.getActiveControlContext();
+    const bind = (action: ControlActionId, customCtx: ControlContextId = ctx) =>
+      getActiveBindingLabel(customCtx, action, dev, this.controlsConfig, lang);
+    const sk = lang === 'sk' || lang === 'cs';
+    const isTouch = dev === 'touch';
+
     const elev = this.getNearbyElevator();
     if (elev) {
-      return `Výťah ${elev.name} (${elev.floorNames[elev.currentFloorIdx]}) · Stlač E alebo Y na jazdu`;
+      if (isTouch) {
+        return `${elev.name} (${elev.floorNames[elev.currentFloorIdx]})`;
+      }
+      const k = bind('interact', 'on_foot');
+      return sk
+        ? `Výťah ${elev.name} (${elev.floorNames[elev.currentFloorIdx]}) · Stlač [${k}]`
+        : `Elevator ${elev.name} (${elev.floorNames[elev.currentFloorIdx]}) · Press [${k}]`;
     }
     if (insideShop) {
+      const k = bind('interact', 'on_foot');
       if (insideShop.category === 'customs') {
         const refVeh = this.currentVehicle ?? this.findNearestPlayerVehicle(18);
         if (refVeh && this.isPointInCustomsBay(refVeh.x, refVeh.z, insideShop.id)) {
-          return `Vozidlo na zdviháku Apex Customs · Stlač E alebo Y pre Tuning`;
+          return isTouch
+            ? `${insideShop.name} · Tuning`
+            : sk
+              ? `Vozidlo na zdviháku Apex Customs · Stlač [${k}] pre Tuning`
+              : `Vehicle on Apex Customs lift · Press [${k}] for Tuning`;
         }
-        return `Apex Customs · Vojdi sem autom na zdvihák pre otvorenie tuningu`;
+        return sk
+          ? `Apex Customs · Vojdi sem autom na zdvihák pre otvorenie tuningu`
+          : `Apex Customs · Drive a car onto the lift for Tuning`;
       }
       if (insideShop.category === 'armory') {
-        return `Vnútri ${insideShop.name} · Strieľaj na terče (Klik/RT) alebo stlač E pre nákup`;
+        if (isTouch) return `${insideShop.name}`;
+        const fKey = this.getSingleFireLabel('on_foot');
+        return sk
+          ? `Vnútri ${insideShop.name} · Strieľaj [${fKey}] alebo [${k}] pre nákup`
+          : `Inside ${insideShop.name} · Shoot [${fKey}] or press [${k}] to shop`;
       }
-      return `Vnútri ${insideShop.name} · Prechádzaj sa alebo stlač E pre ponuku`;
+      if (isTouch) return `${insideShop.name}`;
+      return sk
+        ? `Vnútri ${insideShop.name} · Stlač [${k}] pre ponuku`
+        : `Inside ${insideShop.name} · Press [${k}] for Menu`;
     }
     if (nearbyShop) {
       if (nearbyShop.category === 'customs') {
-        return `${nearbyShop.name} · Vojdi autom priamo dnu na zdvihák pre Tuning`;
+        return sk
+          ? `${nearbyShop.name} · Vojdi autom priamo dnu na zdvihák pre Tuning`
+          : `${nearbyShop.name} · Drive inside onto the lift for Tuning`;
       }
-      return `Stlač E — Otvoriť ${nearbyShop.name} (${nearbyShop.shortLabel})`;
+      if (isTouch) return nearbyShop.name;
+      const k = bind('interact', 'on_foot');
+      return sk
+        ? `Stlač [${k}] — Otvoriť ${nearbyShop.name}`
+        : `Press [${k}] — Open ${nearbyShop.name}`;
     }
     if (!this.currentVehicle && this.nearbyHiddenMission && !this.mission.activeId) {
-      return `Náhodná misia: ${this.nearbyHiddenMission.title} ($${this.nearbyHiddenMission.reward}) · Stlač E pre spustenie`;
+      const mTitle = getLocalizedMissionTitle(this.nearbyHiddenMission.id, this.nearbyHiddenMission.title, lang);
+      if (isTouch) return '';
+      const k = bind('interact', 'on_foot');
+      return sk
+        ? `Náhodná misia: ${mTitle} ($${this.nearbyHiddenMission.reward}) · Stlač [${k}]`
+        : `Side Challenge: ${mTitle} ($${this.nearbyHiddenMission.reward}) · Press [${k}]`;
     }
     if (this.currentVehicle) {
+      if (isTouch) return '';
       const spec = VEHICLE_SPECS[this.currentVehicle.type];
-      if (spec.hasWaterCannon) return 'E/Y Vystúpiť · Klik/RT Vodné delo · V Kamera · T Mobil';
-      if (spec.hasWeapons) return 'W/S Plyn · A/D Náklon · S/K Nos hore / W/I Nos dole · Klik/RT Kanóny';
-      if (spec.kind === 'plane' || spec.kind === 'helicopter') return 'Lietanie: Páčka dole = Nos hore · Páčka hore = Nos dole · E/Y Vystúpiť';
-      return 'E/Y Vystúpiť · Space/RB Ručná brzda · V/Select Kamera · T Mobil';
+      const exitK = bind('interact');
+      const camK = bind('camera');
+      const fireK = this.getSingleFireLabel(ctx);
+      if (spec.hasWaterCannon) {
+        return sk
+          ? `[${exitK}] Vystúpiť · [${fireK}] Vodné delo · [${camK}] Kamera`
+          : `[${exitK}] Exit · [${fireK}] Water Cannon · [${camK}] Camera`;
+      }
+      if (spec.hasWeapons) {
+        const upK = bind('pitchUp');
+        const dnK = bind('pitchDown');
+        return sk
+          ? `[${upK}] Nos hore · [${dnK}] Nos dole · [${fireK}] Kanóny · [${exitK}] Vystúpiť`
+          : `[${upK}] Nose Up · [${dnK}] Nose Down · [${fireK}] Cannons · [${exitK}] Exit`;
+      }
+      if (spec.kind === 'plane' || spec.kind === 'helicopter') {
+        const upK = bind('pitchUp');
+        const dnK = bind('pitchDown');
+        return sk
+          ? `[${upK}] Nos hore · [${dnK}] Nos dole · [${exitK}] Vystúpiť · [${camK}] Kamera`
+          : `[${upK}] Nose Up · [${dnK}] Nose Down · [${exitK}] Exit · [${camK}] Camera`;
+      }
+      const hbK = bind('handbrake');
+      const radK = bind('radio');
+      return sk
+        ? `[${exitK}] Vystúpiť · [${hbK}] Ručná brzda · [${radK}] Rádio · [${camK}] Kamera`
+        : `[${exitK}] Exit · [${hbK}] Handbrake · [${radK}] Radio · [${camK}] Camera`;
     }
     if (!this.onGround && this.account.hasParachute && !this.parachuteOpen) {
-      return 'Stlač SPACE / A pre otvorenie padáku!';
+      if (isTouch) return '';
+      const chuteK = bind('jump', 'on_foot');
+      return sk ? `Stlač [${chuteK}] pre otvorenie padáku!` : `Press [${chuteK}] to deploy parachute!`;
     }
     for (const v of this.vehicles) {
       if (!v.wrecked && Math.hypot(v.x - this.playerX, v.z - this.playerZ) < 5.6 && Math.abs(v.y - this.playerY) < 3.5) {
-        return `Stlač E / F / Y — Nastúpiť do ${VEHICLE_SPECS[v.type].name}`;
+        if (isTouch) return VEHICLE_SPECS[v.type].name;
+        const k = bind('interact', 'on_foot');
+        return sk
+          ? `Stlač [${k}] — Nastúpiť do ${VEHICLE_SPECS[v.type].name}`
+          : `Press [${k}] — Enter ${VEHICLE_SPECS[v.type].name}`;
       }
     }
     const talkNpc = this.findClosestInteractableNpc();
     if (talkNpc) {
-      return `Stlač G — Osloviť ${talkNpc.name} (${talkNpc.role})`;
+      if (isTouch) return '';
+      const talkK = this.getSingleNpcTalkLabel();
+      return sk
+        ? `Stlač [${talkK}] — Osloviť ${talkNpc.name} (${talkNpc.role})`
+        : `Press [${talkK}] — Talk to ${talkNpc.name} (${talkNpc.role})`;
     }
     return '';
   }
@@ -5070,7 +5717,11 @@ export class GameEngine {
       ? Math.round(Math.hypot(this.currentVehicle.vx, this.currentVehicle.vz) * 3.6)
       : 0;
 
-    const radioName = RADIO_STATIONS.find((r) => r.id === this.radioId)?.name ?? 'Off';
+    const ui = getUi(this.language);
+    const radioName =
+      this.radioId === 'off'
+        ? ui.radioOffName
+        : RADIO_STATIONS.find((r) => r.id === this.radioId)?.name ?? ui.radioOffName;
     const refVeh = this.currentVehicle ?? this.findNearestPlayerVehicle(18);
     const cutsceneView: CutsceneViewState = this.cutscene
       ? {
@@ -5122,15 +5773,24 @@ export class GameEngine {
     }
 
     const profile = CHARACTERS[this.characterId];
+    const charCopy = getLocalizedCharacterCopy(this.characterId, this.language);
+    const missionCopy = {
+      ...this.mission,
+      title: this.mission.activeId
+        ? getLocalizedMissionTitle(this.mission.activeId, this.mission.title, this.language)
+        : ui.freeRoamTitle,
+      objective: this.mission.activeId ? this.mission.objective : ui.freeRoamObjective,
+    };
+
     this.onHudUpdate({
       characterId: this.characterId,
       characterName: profile.name,
-      characterRole: profile.role,
+      characterRole: charCopy.role,
       characterTheme: profile.uiTheme,
-      characterLifeStory: profile.lifeStory,
-      characterHomeName: profile.homeName,
+      characterLifeStory: charCopy.story,
+      characterHomeName: charCopy.homeName,
       reputation: this.account.reputation,
-      reputationRank: getReputationRank(this.account.reputation, this.characterId),
+      reputationRank: getLocalizedRank(this.account.reputation, this.characterId, this.language),
       customization: { ...this.account.customization },
       skills: { ...this.account.skills },
       health: Math.round(this.health),
@@ -5171,7 +5831,7 @@ export class GameEngine {
       autoTimeCycle: this.autoTimeCycle,
       weatherPreset: this.weatherPreset,
       targetWeatherPreset: this.targetWeatherPreset,
-      weatherLabel: WEATHER_LABELS_SK[this.weatherPreset],
+      weatherLabel: getWeatherLabel(this.weatherPreset, this.language),
       autoWeatherCycle: this.autoWeatherCycle,
       rainIntensity: this.rainFactor,
       aiDirectorStatus: this.aiDirectorStatus,
@@ -5190,7 +5850,7 @@ export class GameEngine {
       nearbyHiddenMission: this.nearbyHiddenMission,
       toastText: this.toastText,
       toastType: this.toastType,
-      mission: { ...this.mission },
+      mission: missionCopy,
       gslMission,
       completedStoryIds: [...this.completedStoryIds],
       discoveredHiddenIds: [...this.discoveredHiddenIds],
@@ -5209,6 +5869,17 @@ export class GameEngine {
       wasted: this.wasted,
       soundMuted: this.sound.isMuted(),
       gamepadConnected: this.gamepadConnected,
+      activeInputDevice: this.activeInputDevice,
+      detectedGamepadType: this.detectedGamepadType,
+      gamepadLayoutPreference: this.gamepadLayoutPreference,
+      detectedPlatform: this.detectedPlatform,
+      uiModePreference: this.uiModePreference,
+      isMobileUi: this.getIsMobileUi(),
+      steeringSensitivity: this.steeringSensitivity,
+      lookSensitivity: this.lookSensitivity,
+      language: this.language,
+      cloudSyncId: this.cloudSyncId,
+      cloudLastSavedAt: this.cloudLastSavedAt,
       activeControlContext: this.getActiveControlContext(),
       controlsConfig: this.cachedControlsSnapshot,
       playerHandle: this.playerHandle,
@@ -5239,9 +5910,14 @@ export class GameEngine {
     window.removeEventListener('gamepaddisconnected', this.handleGamepadChange);
     window.removeEventListener('blur', this.handleWindowBlur);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+    this.coarseMediaQuery?.removeEventListener('change', this.handlePointerMediaChange);
 
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('mousedown', this.handleCanvasMouseDown);
+    canvas.removeEventListener('pointerdown', this.handleCanvasPointerDown);
+    canvas.removeEventListener('pointermove', this.handleCanvasPointerMove);
+    canvas.removeEventListener('pointerup', this.handleCanvasPointerUp);
+    canvas.removeEventListener('pointercancel', this.handleCanvasPointerUp);
     canvas.removeEventListener('contextmenu', this.handleContextMenu);
     canvas.removeEventListener('webglcontextlost', this.handleContextLost);
 

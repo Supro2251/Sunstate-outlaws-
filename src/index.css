@@ -9,6 +9,10 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
     font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: #070b14;
     color: #f8fafc;
