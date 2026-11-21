@@ -275,10 +275,21 @@ export const SmartphoneModal: React.FC<SmartphoneModalProps> = ({
                 <Phone className="w-4 h-4" /> Vytočiť číslo
               </button>
 
-              <div className="mt-2.5 p-2 rounded bg-slate-950/90 border border-white/10 text-[10px] text-slate-400 space-y-0.5">
-                <div className="text-slate-300 font-semibold">Tajné čísla:</div>
-                <div>3324 = Nesmrteľnosť · 5342 = Vrtuľník · 7645 = Taxík</div>
-                <div>7726 = Superšport · 8654 = Lietadlo · 9975 = Stíhačka</div>
+              <div className="mt-2.5 p-2.5 rounded bg-slate-950/90 border border-white/10 text-[10px] text-slate-400 space-y-1 select-none cursor-default">
+                <div className="text-slate-300 font-semibold flex items-center justify-between">
+                  <span>Zoznam tajných čísel</span>
+                  <span className="text-[9px] text-slate-500">Vytoč ručne na klávesnici</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pointer-events-none">
+                  <div><span className="font-mono-num text-slate-200">3324</span> — Nesmrteľnosť</div>
+                  <div><span className="font-mono-num text-slate-200">2532</span> — Zrušiť hľadanie</div>
+                  <div><span className="font-mono-num text-slate-200">4325</span> — Zdravie & Auto</div>
+                  <div><span className="font-mono-num text-slate-200">5342</span> — Vrtuľník</div>
+                  <div><span className="font-mono-num text-slate-200">7645</span> — Taxík</div>
+                  <div><span className="font-mono-num text-slate-200">7726</span> — Superšport</div>
+                  <div><span className="font-mono-num text-slate-200">8654</span> — Lietadlo</div>
+                  <div><span className="font-mono-num text-slate-200">9975</span> — Stíhačka</div>
+                </div>
               </div>
             </div>
           </div>

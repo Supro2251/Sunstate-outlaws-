@@ -87,10 +87,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'convenience' && (
             <div className="grid grid-cols-2 gap-2.5">
               {[
-                { name: 'SunState Soda', cost: 15, heal: 25, armor: 0, desc: '+25 Zdravie' },
-                { name: 'Cuban Espresso', cost: 25, heal: 40, armor: 0, desc: '+40 Zdravie' },
-                { name: 'Tropical Bento', cost: 50, heal: 85, armor: 0, desc: '+85 Zdravie' },
-                { name: 'Neon Surge Energy', cost: 65, heal: 60, armor: 25, desc: '+60 HP & +25 Vesta' },
+                { name: 'SunState Soda', cost: 35, heal: 25, armor: 0, desc: '+25 Zdravie' },
+                { name: 'Cuban Espresso', cost: 55, heal: 40, armor: 0, desc: '+40 Zdravie' },
+                { name: 'Tropical Bento', cost: 110, heal: 85, armor: 0, desc: '+85 Zdravie' },
+                { name: 'Neon Surge Energy', cost: 145, heal: 60, armor: 25, desc: '+60 HP & +25 Vesta' },
               ].map((item) => (
                 <button
                   key={item.name}
@@ -110,10 +110,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'cafe' && (
             <div className="grid grid-cols-2 gap-2.5">
               {[
-                { name: 'Palmetto Espresso', cost: 18, heal: 25, rep: 5, desc: '+25 Zdravie · +5 RP' },
-                { name: 'Ľadové Matcha Latté', cost: 28, heal: 40, rep: 8, desc: '+40 Zdravie · +8 RP' },
-                { name: 'Karamelový Croissant & Káva', cost: 45, heal: 65, rep: 12, desc: '+65 Zdravie · +12 RP' },
-                { name: 'Špeciál pražiarne pre tím', cost: 80, heal: 100, rep: 20, desc: 'Plné zdravie · +20 RP' },
+                { name: 'Palmetto Espresso', cost: 45, heal: 25, rep: 5, desc: '+25 Zdravie · +5 RP' },
+                { name: 'Ľadové Matcha Latté', cost: 65, heal: 40, rep: 8, desc: '+40 Zdravie · +8 RP' },
+                { name: 'Karamelový Croissant & Káva', cost: 95, heal: 65, rep: 12, desc: '+65 Zdravie · +12 RP' },
+                { name: 'Špeciál pražiarne pre tím', cost: 180, heal: 100, rep: 20, desc: 'Plné zdravie · +20 RP' },
               ].map((item) => (
                 <button
                   key={item.name}
@@ -133,10 +133,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'club' && (
             <div className="grid grid-cols-2 gap-2.5">
               {[
-                { name: 'Neónový koktail', cost: 35, heal: 30, rep: 15, desc: '+30 HP · +15 Reputácia' },
-                { name: 'VIP vstupenka do salónika', cost: 180, heal: 45, rep: 45, desc: '+45 HP · +45 Reputácia' },
-                { name: 'Backstage DJ Set & Drink', cost: 320, heal: 75, rep: 80, desc: '+75 HP · +80 Reputácia' },
-                { name: 'Súkromná plážová lóža', cost: 500, heal: 100, rep: 120, desc: '100% HP · +120 Reputácia' },
+                { name: 'Neónový koktail', cost: 90, heal: 30, rep: 15, desc: '+30 HP · +15 Reputácia' },
+                { name: 'VIP vstupenka do salónika', cost: 420, heal: 45, rep: 45, desc: '+45 HP · +45 Reputácia' },
+                { name: 'Backstage DJ Set & Drink', cost: 780, heal: 75, rep: 80, desc: '+75 HP · +80 Reputácia' },
+                { name: 'Súkromná plážová lóža', cost: 1250, heal: 100, rep: 120, desc: '100% HP · +120 Reputácia' },
               ].map((item) => (
                 <button
                   key={item.name}
@@ -158,7 +158,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               {[
                 {
                   name: 'Vyplatenie pokuty & čistý register',
-                  cost: 250,
+                  cost: 650,
                   heal: 0,
                   rep: 10,
                   clearWanted: true,
@@ -166,7 +166,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 },
                 {
                   name: 'Taktická zdravotná sada PBPD',
-                  cost: 90,
+                  cost: 220,
                   heal: 65,
                   rep: 5,
                   clearWanted: false,
@@ -174,7 +174,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 },
                 {
                   name: 'Občianska podpora hliadky',
-                  cost: 150,
+                  cost: 380,
                   heal: 25,
                   rep: 35,
                   clearWanted: false,
@@ -182,7 +182,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 },
                 {
                   name: 'Oficiálna previerka čistého štítu',
-                  cost: 400,
+                  cost: 1100,
                   heal: 100,
                   rep: 55,
                   clearWanted: true,
@@ -214,7 +214,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">Oprava karosérie & motora</span>
-                  <span className="font-mono-num text-emerald-400">$150</span>
+                  <span className="font-mono-num text-emerald-400">$450</span>
                 </button>
                 <button
                   onClick={() => onVehicleMod('engine')}
@@ -224,7 +224,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     Tuning motora (Lv.{hud.vehicleUpgrades.engineLevel}/3)
                   </span>
                   <span className="font-mono-num text-emerald-400">
-                    ${600 + hud.vehicleUpgrades.engineLevel * 350}
+                    ${(2400 + hud.vehicleUpgrades.engineLevel * 1400).toLocaleString()}
                   </span>
                 </button>
                 <button
@@ -234,7 +234,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   <span className="font-semibold text-white">
                     {hud.vehicleUpgrades.turboInstalled ? 'Twin-Turbo (Osadené)' : 'Inštalovať Twin-Turbo'}
                   </span>
-                  <span className="font-mono-num text-emerald-400">$950</span>
+                  <span className="font-mono-num text-emerald-400">$4,500</span>
                 </button>
                 <button
                   onClick={() => onVehicleMod('handling')}
@@ -244,13 +244,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     Podvozok & Brzdy (Lv.{hud.vehicleUpgrades.handlingLevel}/2)
                   </span>
                   <span className="font-mono-num text-emerald-400">
-                    ${450 + hud.vehicleUpgrades.handlingLevel * 300}
+                    ${(1800 + hud.vehicleUpgrades.handlingLevel * 1200).toLocaleString()}
                   </span>
                 </button>
               </div>
 
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Metalický lak ($200)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Metalický lak ($650)</div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Flamingo Pink', hex: 0xff2a6d },
@@ -277,7 +277,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               </div>
 
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Podsvietenie Neón ($350)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Podsvietenie Neón ($1,100)</div>
                 <div className="flex flex-wrap gap-2">
                   {(['off', 'cyan', 'pink', 'lime', 'amber'] as NeonColorId[]).map((n) => (
                     <button
@@ -300,7 +300,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'armory' && (
             <div className="space-y-3">
               <div className="p-2.5 rounded bg-amber-950/50 border border-amber-400/30 text-amber-200">
-                Tip: V zadnej časti obchodu sa nachádza živá strelnica s pohyblivými terčmi! Strieľaj na ne pre tréning mušky a odmeny.
+                Tip: V zadnej časti obchodu sa nachádza živá strelnica s pohyblivými terčmi! Strieľaj na ne pre tréning mušky a malé odmeny.
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <button
@@ -313,7 +313,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                       {hud.unlockedWeapons.pistol ? 'Vlastnená · Doplniť' : 'Odomknúť pištoľ'}
                     </div>
                   </div>
-                  <span className="font-mono-num text-emerald-400">$300</span>
+                  <span className="font-mono-num text-emerald-400">$1,200</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('smg')}
@@ -325,21 +325,21 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                       {hud.unlockedWeapons.smg ? 'Vlastnené · Doplniť' : 'Rýchlopalný samopal'}
                     </div>
                   </div>
-                  <span className="font-mono-num text-emerald-400">$750</span>
+                  <span className="font-mono-num text-emerald-400">$3,400</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('ammo_pistol')}
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">Náboje 9mm (Plný zásobník)</span>
-                  <span className="font-mono-num text-emerald-400">$120</span>
+                  <span className="font-mono-num text-emerald-400">$280</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('ammo_smg')}
                   className="p-3 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-left flex justify-between"
                 >
                   <span className="font-semibold text-white">Náboje SMG (Plný zásobník)</span>
-                  <span className="font-mono-num text-emerald-400">$220</span>
+                  <span className="font-mono-num text-emerald-400">$540</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('armor')}
@@ -349,7 +349,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     <div className="font-semibold text-white">Nepriestrelná vesta</div>
                     <div className="text-slate-400">Doplní vestu na 100%</div>
                   </div>
-                  <span className="font-mono-num text-emerald-400">$350</span>
+                  <span className="font-mono-num text-emerald-400">$1,150</span>
                 </button>
                 <button
                   onClick={() => onBuyArmory('parachute')}
@@ -361,7 +361,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                       {hud.hasParachute ? 'Zbalený na chrbte' : 'Pre zoskoky z lietadiel & striech'}
                     </div>
                   </div>
-                  <span className="font-mono-num text-emerald-400">$250</span>
+                  <span className="font-mono-num text-emerald-400">$950</span>
                 </button>
               </div>
             </div>
@@ -370,7 +370,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'clothing' && (
             <div className="space-y-3">
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Bundy & Saká ($120)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Bundy & Saká ($380)</div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Miami Cyan', hex: 0x06b6d4 },
@@ -382,7 +382,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   ].map((item) => (
                     <button
                       key={item.name}
-                      onClick={() => onUpdateStyle({ jacketColor: item.hex }, 120, item.name)}
+                      onClick={() => onUpdateStyle({ jacketColor: item.hex }, 380, item.name)}
                       className="px-2.5 py-1.5 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-slate-100 flex items-center gap-1.5"
                     >
                       <span
@@ -395,7 +395,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Nohavice ($80)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Nohavice ($240)</div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Tmavá bridlica', hex: 0x1e293b },
@@ -405,7 +405,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   ].map((item) => (
                     <button
                       key={item.name}
-                      onClick={() => onUpdateStyle({ pantsColor: item.hex }, 80, item.name)}
+                      onClick={() => onUpdateStyle({ pantsColor: item.hex }, 240, item.name)}
                       className="px-2.5 py-1.5 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-slate-100"
                     >
                       {item.name}
@@ -414,7 +414,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Okuliare ($60)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Okuliare ($180)</div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Obsidian', hex: 0x0f172a },
@@ -424,7 +424,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   ].map((item) => (
                     <button
                       key={item.name}
-                      onClick={() => onUpdateStyle({ shadesColor: item.hex }, 60, item.name)}
+                      onClick={() => onUpdateStyle({ shadesColor: item.hex }, 180, item.name)}
                       className="px-2.5 py-1.5 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-slate-100"
                     >
                       {item.name}
@@ -438,12 +438,12 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           {shop.category === 'barber' && (
             <div className="space-y-3">
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Účesy ($75)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Účesy ($220)</div>
                 <div className="grid grid-cols-2 gap-2">
                   {(['fade', 'slick', 'waves', 'buzz'] as HairStyleId[]).map((h) => (
                     <button
                       key={h}
-                      onClick={() => onUpdateStyle({ hairStyle: h }, 75, `Strih: ${h}`)}
+                      onClick={() => onUpdateStyle({ hairStyle: h }, 220, `Strih: ${h}`)}
                       className={`p-2.5 rounded border capitalize text-left ${
                         hud.customization.hairStyle === h
                           ? 'bg-amber-500 text-slate-950 font-semibold border-amber-300'
@@ -456,12 +456,12 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Brada ($50)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Brada ($150)</div>
                 <div className="grid grid-cols-2 gap-2">
                   {(['clean', 'stubble', 'goatee', 'full'] as BeardStyleId[]).map((b) => (
                     <button
                       key={b}
-                      onClick={() => onUpdateStyle({ beardStyle: b }, 50, `Brada: ${b}`, true)}
+                      onClick={() => onUpdateStyle({ beardStyle: b }, 150, `Brada: ${b}`, true)}
                       className={`p-2.5 rounded border capitalize text-left ${
                         hud.customization.beardStyle === b
                           ? 'bg-amber-500 text-slate-950 font-semibold border-amber-300'
@@ -474,7 +474,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-300 font-semibold mb-1.5">Farba vlasov ($40)</div>
+                <div className="text-slate-300 font-semibold mb-1.5">Farba vlasov ($120)</div>
                 <div className="flex flex-wrap gap-2">
                   {[
                     { name: 'Čierna', hex: 0x171717 },
@@ -484,7 +484,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   ].map((c) => (
                     <button
                       key={c.name}
-                      onClick={() => onUpdateStyle({ hairColor: c.hex }, 40, c.name)}
+                      onClick={() => onUpdateStyle({ hairColor: c.hex }, 120, c.name)}
                       className="px-2.5 py-1.5 rounded bg-slate-950/80 hover:bg-slate-800 border border-white/10 text-slate-100"
                     >
                       {c.name}
@@ -499,10 +499,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             <div className="grid grid-cols-2 gap-2.5">
               {(
                 [
-                  { id: 'serpent', name: 'Neónový Had (Rukáv)', cost: 200 },
-                  { id: 'compass', name: 'Kompas Coral Keys', cost: 180 },
-                  { id: 'sunstate', name: 'Erb Sunstate', cost: 220 },
-                  { id: 'none', name: 'Laserové odstránenie', cost: 100 },
+                  { id: 'serpent', name: 'Neónový Had (Rukáv)', cost: 650 },
+                  { id: 'compass', name: 'Kompas Coral Keys', cost: 580 },
+                  { id: 'sunstate', name: 'Erb Sunstate', cost: 720 },
+                  { id: 'none', name: 'Laserové odstránenie', cost: 320 },
                 ] as Array<{ id: TattooStyleId; name: string; cost: number }>
               ).map((t) => (
                 <button
@@ -557,7 +557,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   }}
                   className="p-3 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold col-span-2"
                 >
-                  Spustiť Bankovú Lúpež — Zlatá horúčka (+$4,800)
+                  Spustiť Bankovú Lúpež — Zlatá horúčka (+$850)
                 </button>
               </div>
             </div>
@@ -565,16 +565,24 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
           {shop.category === 'dealership' && (
             <div className="space-y-2.5">
-              {(['veloce', 'solstice', 'brawler', 'terramax', 'taxi', 'helicopter', 'plane'] as VehicleTypeId[]).map(
+              {(['taxi', 'brawler', 'terramax', 'veloce', 'solstice', 'plane', 'helicopter', 'jet'] as VehicleTypeId[]).map(
                 (vId) => {
                   const spec = VEHICLE_SPECS[vId];
+                  const isOwned = hud.ownedVehicles.includes(vId);
                   return (
                     <div
                       key={vId}
                       className="p-3 rounded bg-slate-950/80 border border-white/10 flex items-center justify-between gap-3"
                     >
                       <div>
-                        <div className="font-semibold text-white">{spec.name}</div>
+                        <div className="font-semibold text-white flex items-center gap-2">
+                          <span>{spec.name}</span>
+                          {isOwned && (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px]">
+                              V garáži
+                            </span>
+                          )}
+                        </div>
                         <div className="text-slate-400">
                           {spec.category} · Max {Math.round(spec.maxSpeed * 3.6)} km/h
                         </div>
@@ -589,15 +597,27 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                         >
                           Vyskúšať
                         </button>
-                        <button
-                          onClick={() => {
-                            onDealershipVehicle(vId, true);
-                            onClose();
-                          }}
-                          className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono-num"
-                        >
-                          Kúpiť ${spec.price}
-                        </button>
+                        {isOwned ? (
+                          <button
+                            onClick={() => {
+                              onDealershipVehicle(vId, false);
+                              onClose();
+                            }}
+                            className="px-3 py-1.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold"
+                          >
+                            Pristaviť
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              onDealershipVehicle(vId, true);
+                              onClose();
+                            }}
+                            className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono-num"
+                          >
+                            Kúpiť ${spec.price.toLocaleString()}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

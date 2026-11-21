@@ -9,7 +9,15 @@ export type NpcBehaviorState =
   | 'confront'
   | 'hail_taxi';
 export type QualityLevel = 'high' | 'medium' | 'performance';
-export type RadioStationId = 'pulse' | 'synthwave' | 'bassline' | 'off';
+export type RadioStationId =
+  | 'pulse'
+  | 'synthwave'
+  | 'rock'
+  | 'hiphop'
+  | 'latin'
+  | 'techno'
+  | 'jazz'
+  | 'off';
 export type CharacterId = 'dante' | 'elena' | 'kairo';
 export type WeaponId = 'fists' | 'pistol' | 'smg';
 export type CameraMode = 'third' | 'first';
@@ -23,6 +31,7 @@ export type VehicleTypeId =
   | 'ambulance'
   | 'firetruck'
   | 'pbpd'
+  | 'gsl_van'
   | 'helicopter'
   | 'plane'
   | 'jet';
@@ -42,6 +51,7 @@ export type ControlActionId =
   | 'handbrake'
   | 'sprint'
   | 'jump'
+  | 'aim'
   | 'fire'
   | 'interact'
   | 'camera'
@@ -91,6 +101,7 @@ export const ACTION_LABELS_SK: Record<ControlActionId, string> = {
   handbrake: 'Ručná brzda / Drift',
   sprint: 'Šprint',
   jump: 'Skok / Padák',
+  aim: 'Presné mierenie (ADS)',
   fire: 'Streľba / Vodné delo / Kanóny',
   interact: 'Nastúpiť / Vystúpiť / Výťah / Obchod',
   camera: 'Kamera (1st / 3rd Person)',
@@ -113,6 +124,7 @@ export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
     right: { key: 'KeyD', pad: 'AXIS_LX_POS' },
     sprint: { key: 'ShiftLeft', pad: 'BTN_0' }, // GTA 5: A / Cross = Sprint
     jump: { key: 'Space', pad: 'BTN_2' }, // GTA 5: X / Square = Jump
+    aim: { key: 'KeyC', pad: 'BTN_6' }, // GTA 5: LT / L2 (+ Right Mouse) = Aim
     fire: { key: 'KeyJ', pad: 'BTN_7' }, // GTA 5: RT / R2 = Fire
     interact: { key: 'KeyE', pad: 'BTN_3' }, // GTA 5: Y / Triangle = Enter Vehicle / Interact
     camera: { key: 'KeyV', pad: 'BTN_8' }, // GTA 5: Select = Camera
@@ -303,6 +315,7 @@ export interface CharacterAccount {
   unlockedWeapons: Record<WeaponId, boolean>;
   ammo: Record<WeaponId, number>;
   hasParachute: boolean;
+  ownedVehicles: VehicleTypeId[];
 }
 
 export interface CharacterProfile {
@@ -382,6 +395,8 @@ export interface StoryMissionDef {
   timeLimitSec: number;
   reward: number;
   wantedOnStart?: number;
+  requiredCompleted?: number;
+  isGslCourier?: boolean;
   introLines: Array<{ speaker: string; text: string }>;
   outroLines: Array<{ speaker: string; text: string }>;
   stages: MissionStageDef[];
@@ -467,6 +482,20 @@ export interface AiNpcFeedItem {
   dist: number;
 }
 
+export interface GslMissionTelemetry {
+  active: boolean;
+  carDamagePct: number;
+  packageDamagePct: number;
+  maxPackageDamagePct: number;
+  onRoad: boolean;
+}
+
+export interface AimHudState {
+  isAiming: boolean;
+  targetType: 'none' | 'npc' | 'vehicle' | 'range';
+  hitMarker: boolean;
+}
+
 export interface HudSnapshot {
   characterId: CharacterId;
   characterName: string;
@@ -550,6 +579,9 @@ export interface HudSnapshot {
   friends: string[];
   onlineFriends: RemoteFriendInfo[];
   pendingInvite: PendingCoopInvite | null;
+  gslMission: GslMissionTelemetry | null;
+  aimState: AimHudState;
+  ownedVehicles: VehicleTypeId[];
 }
 
 export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
@@ -558,10 +590,10 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Veloce GT',
     category: 'Športové kupé',
     kind: 'car',
-    price: 1200,
+    price: 22000,
     maxSpeed: 58,
-    accel: 36,
-    braking: 46,
+    accel: 14.5,
+    braking: 44,
     turnSpeed: 2.75,
     driftGrip: 2.5,
     normalGrip: 8.6,
@@ -575,10 +607,10 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Solstice Roadster',
     category: 'Superšport',
     kind: 'car',
-    price: 2400,
+    price: 48000,
     maxSpeed: 74,
-    accel: 47,
-    braking: 55,
+    accel: 21.0,
+    braking: 52,
     turnSpeed: 2.95,
     driftGrip: 2.7,
     normalGrip: 9.4,
@@ -592,10 +624,10 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Brawler V8',
     category: 'Muscle Car',
     kind: 'car',
-    price: 950,
-    maxSpeed: 52,
-    accel: 34,
-    braking: 40,
+    price: 14500,
+    maxSpeed: 54,
+    accel: 13.5,
+    braking: 38,
     turnSpeed: 2.45,
     driftGrip: 2.0,
     normalGrip: 7.5,
@@ -609,10 +641,10 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'TerraMax 4x4',
     category: 'Pobrežné SUV',
     kind: 'car',
-    price: 1100,
+    price: 16800,
     maxSpeed: 46,
-    accel: 28,
-    braking: 38,
+    accel: 9.8,
+    braking: 36,
     turnSpeed: 2.25,
     driftGrip: 3.1,
     normalGrip: 8.8,
@@ -626,10 +658,10 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Sunstate Cab Taxi',
     category: 'Taxík',
     kind: 'car',
-    price: 700,
+    price: 6500,
     maxSpeed: 48,
-    accel: 30,
-    braking: 42,
+    accel: 10.6,
+    braking: 40,
     turnSpeed: 2.55,
     driftGrip: 2.8,
     normalGrip: 8.6,
@@ -646,8 +678,8 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     kind: 'car',
     price: 0,
     maxSpeed: 50,
-    accel: 30,
-    braking: 42,
+    accel: 9.5,
+    braking: 40,
     turnSpeed: 2.3,
     driftGrip: 3.2,
     normalGrip: 8.8,
@@ -664,8 +696,8 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     kind: 'car',
     price: 0,
     maxSpeed: 44,
-    accel: 24,
-    braking: 36,
+    accel: 7.2,
+    braking: 34,
     turnSpeed: 1.95,
     driftGrip: 3.6,
     normalGrip: 8.4,
@@ -683,7 +715,7 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     kind: 'car',
     price: 0,
     maxSpeed: 56,
-    accel: 37,
+    accel: 15.2,
     braking: 46,
     turnSpeed: 2.8,
     driftGrip: 2.9,
@@ -695,12 +727,29 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     isPolice: true,
     isEmergency: true,
   },
+  gsl_van: {
+    id: 'gsl_van',
+    name: 'GSL Express Dodávka',
+    category: 'Kuriérska dodávka',
+    kind: 'car',
+    price: 1400,
+    maxSpeed: 46,
+    accel: 8.6,
+    braking: 34,
+    turnSpeed: 2.15,
+    driftGrip: 2.8,
+    normalGrip: 8.8,
+    length: 5.8,
+    width: 2.25,
+    height: 2.55,
+    colors: [0xf8fafc],
+  },
   helicopter: {
     id: 'helicopter',
     name: 'SkyHawk Vrtuľník',
     category: 'Helikoptéra',
     kind: 'helicopter',
-    price: 5500,
+    price: 85000,
     maxSpeed: 64,
     accel: 30,
     braking: 30,
@@ -717,7 +766,7 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Coral Wing Lietadlo',
     category: 'Vrtuľové lietadlo',
     kind: 'plane',
-    price: 4800,
+    price: 72000,
     maxSpeed: 92,
     accel: 34,
     braking: 26,
@@ -734,7 +783,7 @@ export const VEHICLE_SPECS: Record<VehicleTypeId, VehicleSpec> = {
     name: 'Valkyrie Ozbrojená Stíhačka',
     category: 'Bojová stíhačka',
     kind: 'plane',
-    price: 9500,
+    price: 165000,
     maxSpeed: 145,
     accel: 64,
     braking: 40,
@@ -764,9 +813,9 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
     strengthNote: 'Silný šofér a výdrž',
     weaknessNote: 'Slabšia presnosť streľby a pilotovanie',
     skinColor: 0xd99b78,
-    startingCash: 2500,
-    startingBank: 4800,
-    startingReputation: 240,
+    startingCash: 350,
+    startingBank: 500,
+    startingReputation: 120,
     startingSkills: { driving: 64, shooting: 34, flying: 26, stamina: 60 },
     defaults: {
       jacketColor: 0x0e7490,
@@ -802,9 +851,9 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
     strengthNote: 'Presná streľba a pilotovanie lietadiel',
     weaknessNote: 'Slabšia kontrola auta v šmyku',
     skinColor: 0xc6865c,
-    startingCash: 3100,
-    startingBank: 7200,
-    startingReputation: 380,
+    startingCash: 450,
+    startingBank: 800,
+    startingReputation: 160,
     startingSkills: { driving: 36, shooting: 68, flying: 64, stamina: 44 },
     defaults: {
       jacketColor: 0xbe123c,
@@ -840,9 +889,9 @@ export const CHARACTERS: Record<CharacterId, CharacterProfile> = {
     strengthNote: 'Vysoká výdrž, nočný prehľad a taktická streľba',
     weaknessNote: 'Menšie skúsenosti s ťažkým letectvom',
     skinColor: 0xb97b56,
-    startingCash: 4200,
-    startingBank: 6500,
-    startingReputation: 310,
+    startingCash: 550,
+    startingBank: 700,
+    startingReputation: 140,
     startingSkills: { driving: 52, shooting: 58, flying: 32, stamina: 72 },
     defaults: {
       jacketColor: 0x6d28d9,
@@ -900,9 +949,13 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
 };
 
 export const RADIO_STATIONS: RadioStation[] = [
-  { id: 'pulse', name: 'Pulse FM 104.2', genre: 'Miami Electro-Pop', bpm: 122 },
-  { id: 'synthwave', name: 'Synthwave Coast', genre: 'Neon Retrowave', bpm: 108 },
-  { id: 'bassline', name: 'Bassline Radio', genre: 'Sunstate Trap', bpm: 92 },
+  { id: 'pulse', name: 'Pulse FM 104.2', genre: 'Electro-Pop / Dance', bpm: 122 },
+  { id: 'synthwave', name: 'Neon Coast 88.6', genre: '80s Retrowave', bpm: 110 },
+  { id: 'rock', name: 'Rebel Rock 104.9', genre: 'Hard & Classic Rock', bpm: 132 },
+  { id: 'hiphop', name: 'Westside 98.4', genre: 'Hip-Hop / Boom-Bap', bpm: 92 },
+  { id: 'latin', name: 'Sol Tropico 101.2', genre: 'Latin / Reggaeton', bpm: 104 },
+  { id: 'techno', name: 'Underground 107.7', genre: 'Acid Techno / Rave', bpm: 136 },
+  { id: 'jazz', name: 'Palmetto Lounge 89.5', genre: 'Lo-Fi Jazz / Chill', bpm: 80 },
   { id: 'off', name: 'Rádio vypnuté', genre: 'Zvuky mesta a motora', bpm: 0 },
 ];
 

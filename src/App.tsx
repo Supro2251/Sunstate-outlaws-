@@ -54,6 +54,11 @@ const INITIAL_HUD: HudSnapshot = {
   cameraMode: 'third',
   weaponId: 'pistol',
   weaponName: 'Viper 9mm',
+  aimState: {
+    isAiming: false,
+    targetType: 'none',
+    hitMarker: false,
+  },
   ammo: { fists: 0, pistol: 84, smg: 0 },
   unlockedWeapons: { fists: true, pistol: true, smg: false },
   radioId: 'off',
@@ -93,6 +98,7 @@ const INITIAL_HUD: HudSnapshot = {
     timeLeft: 0,
     reward: 0,
   },
+  gslMission: null,
   completedStoryIds: [],
   discoveredHiddenIds: [],
   completedHiddenIds: [],
@@ -123,6 +129,7 @@ const INITIAL_HUD: HudSnapshot = {
   friends: [],
   onlineFriends: [],
   pendingInvite: null,
+  ownedVehicles: ['taxi'],
 };
 
 export default function App() {
@@ -327,8 +334,6 @@ export default function App() {
           onSetRadio={(s) => engineRef.current?.setRadioStation(s)}
           onSetCharacter={(c) => engineRef.current?.setCharacter(c)}
           onSetWeapon={(w) => engineRef.current?.setWeapon(w)}
-          onClearWanted={() => engineRef.current?.clearWanted()}
-          onHealAndRepair={() => engineRef.current?.healAndRepair()}
           onToggleMute={() => engineRef.current?.toggleMute()}
           onStartStoryMission={(id) => engineRef.current?.startStoryMission(id)}
           onStartHiddenMission={(id) => engineRef.current?.startHiddenMission(id)}

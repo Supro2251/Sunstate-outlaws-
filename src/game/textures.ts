@@ -62,6 +62,7 @@ export interface ProceduralTexturePack {
   bullseyeTarget: THREE.CanvasTexture;
   taxiSign: THREE.CanvasTexture;
   emsCross: THREE.CanvasTexture;
+  gslLogo: THREE.CanvasTexture;
   elevatorPanel: THREE.CanvasTexture;
   buildingWindows: THREE.CanvasTexture[];
   buildingEmissives: THREE.CanvasTexture[];
@@ -703,6 +704,40 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     );
   });
 
+  // 22. GSL Express Courier Van Decal Logo
+  const [gslC, gslCtx] = createCanvas(512, 256);
+  gslCtx.fillStyle = '#0f172a';
+  gslCtx.fillRect(0, 0, 512, 256);
+  // Diagonal courier speed stripes
+  gslCtx.fillStyle = '#f97316';
+  gslCtx.fillRect(0, 198, 512, 26);
+  gslCtx.fillStyle = '#facc15';
+  gslCtx.fillRect(0, 224, 512, 12);
+  gslCtx.strokeStyle = '#f97316';
+  gslCtx.lineWidth = 10;
+  gslCtx.strokeRect(10, 10, 492, 236);
+  // Orange parcel icon on left
+  gslCtx.fillStyle = '#f97316';
+  gslCtx.fillRect(36, 54, 92, 92);
+  gslCtx.strokeStyle = '#0f172a';
+  gslCtx.lineWidth = 6;
+  gslCtx.beginPath();
+  gslCtx.moveTo(36, 100);
+  gslCtx.lineTo(128, 100);
+  gslCtx.moveTo(82, 54);
+  gslCtx.lineTo(82, 146);
+  gslCtx.stroke();
+  // Bold GSL lettering
+  gslCtx.fillStyle = '#ffffff';
+  gslCtx.font = '900 104px "Chakra Petch", sans-serif';
+  gslCtx.textAlign = 'left';
+  gslCtx.textBaseline = 'middle';
+  gslCtx.fillText('GSL', 152, 98);
+  gslCtx.fillStyle = '#fb923c';
+  gslCtx.font = 'bold 26px "Plus Jakarta Sans", sans-serif';
+  gslCtx.fillText('EXPRESS KURIÉR', 156, 162);
+  const gslLogo = track(finalizeColorTexture(gslC, maxAnisotropy, 1, 1));
+
   return {
     asphaltRoad,
     asphaltPlaza,
@@ -725,6 +760,7 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     bullseyeTarget,
     taxiSign,
     emsCross,
+    gslLogo,
     elevatorPanel,
     buildingWindows,
     buildingEmissives,

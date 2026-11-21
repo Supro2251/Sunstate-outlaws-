@@ -13,17 +13,15 @@ import {
   CloudLightning,
   CloudRain,
   Compass,
-  Crosshair,
   Flag,
   HelpCircle,
   Home,
+  Lock,
   Map as MapIcon,
   MessageSquare,
   Phone,
   Radio,
   Settings,
-  Shield,
-  Sparkles,
   Star,
   Sun,
   User,
@@ -69,8 +67,6 @@ interface GameHUDProps {
   onSetRadio: (station: RadioStationId) => void;
   onSetCharacter: (id: CharacterId) => void;
   onSetWeapon: (id: WeaponId) => void;
-  onClearWanted: () => void;
-  onHealAndRepair: () => void;
   onToggleMute: () => void;
   onStartStoryMission: (id: string) => void;
   onStartHiddenMission: (id: string) => void;
@@ -104,8 +100,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onSetRadio,
   onSetCharacter,
   onSetWeapon,
-  onClearWanted,
-  onHealAndRepair,
   onToggleMute,
   onStartStoryMission,
   onStartHiddenMission,
@@ -123,8 +117,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const theme = hud.characterTheme;
 
   const formatClock = (hour: number) => {
-    const h = Math.floor(hour) % 24;
-    const m = Math.floor((hour - Math.floor(hour)) * 60);
+    const totalMin = Math.floor(hour * 60 + 0.0001) % 1440;
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   };
 
@@ -333,6 +328,36 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     )}
                   </div>
                   <div className="text-xs text-slate-200 mt-0.5">{hud.mission.objective}</div>
+                  {hud.gslMission?.active && (
+                    <div className="mt-1.5 pt-1.5 border-t border-white/10 flex flex-wrap items-center gap-3 text-[11px] font-mono-num">
+                      <span className="text-amber-300 font-bold tracking-wide">GSL KURIÉR</span>
+                      <span
+                        className={
+                          hud.gslMission.carDamagePct === 0 ? 'text-emerald-400' : 'text-rose-400 font-bold'
+                        }
+                      >
+                        Dodávka: {hud.gslMission.carDamagePct}% / 0%
+                      </span>
+                      <span
+                        className={
+                          hud.gslMission.packageDamagePct <= 2.5
+                            ? 'text-emerald-300'
+                            : hud.gslMission.packageDamagePct <= 5.0
+                              ? 'text-amber-300 font-semibold'
+                              : 'text-rose-400 font-bold'
+                        }
+                      >
+                        Balík: {hud.gslMission.packageDamagePct.toFixed(2)}% / {hud.gslMission.maxPackageDamagePct.toFixed(1)}%
+                      </span>
+                      <span
+                        className={
+                          hud.gslMission.onRoad ? 'text-cyan-300' : 'text-rose-400 font-bold'
+                        }
+                      >
+                        {hud.gslMission.onRoad ? 'Trasa: Po ceste OK' : 'MIMO CESTY!'}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={onCancelMission}
@@ -583,6 +608,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     </span>
                   )}
                 </div>
+                {hud.weaponId !== 'fists' && (
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span
+                      className={
+                        hud.aimState.isAiming ? 'text-amber-300 font-semibold' : 'text-slate-400'
+                      }
+                    >
+                      {hud.aimState.isAiming
+                        ? 'Presné mierenie aktívne'
+                        : hud.gamepadConnected
+                          ? 'L2 / Pravý klik — Presné mierenie'
+                          : 'Pravý klik / C — Presné mierenie'}
+                    </span>
+                  </div>
+                )}
                 {(hud.hasParachute || hud.parachuteOpen) && (
                   <div className="text-[10px] text-cyan-300 flex justify-between">
                     <span>
@@ -600,10 +640,80 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
       )}
 
-      {/* Crosshair & Wasted */}
+      {/* Dynamic Tactical Crosshair & Hitmarker */}
       {!isCutscene && !hud.inVehicle && !hud.wasted && (
         <div className="fixed inset-0 pointer-events-none flex items-center justify-center">
-          <Crosshair className="w-5 h-5 text-white/55" />
+          {hud.weaponId === 'fists' ? (
+            <div className="w-2 h-2 rounded-full bg-white/60 ring-1 ring-black/50" />
+          ) : (
+            (() => {
+              const isAds = hud.aimState.isAiming;
+              const gap = isAds ? 5 : 10;
+              const tickLen = isAds ? 6 : 5;
+              const reticleColor =
+                hud.aimState.targetType === 'npc'
+                  ? '#fb7185'
+                  : hud.aimState.targetType === 'range'
+                    ? '#facc15'
+                    : hud.aimState.targetType === 'vehicle'
+                      ? '#38bdf8'
+                      : 'rgba(255,255,255,0.88)';
+              return (
+                <svg
+                  width="44"
+                  height="44"
+                  viewBox="-22 -22 44 44"
+                  className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] transition-transform duration-75"
+                >
+                  <circle cx="0" cy="0" r={isAds ? 1.8 : 2} fill={reticleColor} />
+                  <line
+                    x1="0"
+                    y1={-gap}
+                    x2="0"
+                    y2={-(gap + tickLen)}
+                    stroke={reticleColor}
+                    strokeWidth={isAds ? 1.75 : 1.5}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1="0"
+                    y1={gap}
+                    x2="0"
+                    y2={gap + tickLen}
+                    stroke={reticleColor}
+                    strokeWidth={isAds ? 1.75 : 1.5}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={-gap}
+                    y1="0"
+                    x2={-(gap + tickLen)}
+                    y2="0"
+                    stroke={reticleColor}
+                    strokeWidth={isAds ? 1.75 : 1.5}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={gap}
+                    y1="0"
+                    x2={gap + tickLen}
+                    y2="0"
+                    stroke={reticleColor}
+                    strokeWidth={isAds ? 1.75 : 1.5}
+                    strokeLinecap="round"
+                  />
+                  {hud.aimState.hitMarker && (
+                    <g stroke="#fde047" strokeWidth="2" strokeLinecap="round">
+                      <line x1="-10" y1="-10" x2="-4" y2="-4" />
+                      <line x1="10" y1="-10" x2="4" y2="-4" />
+                      <line x1="-10" y1="10" x2="-4" y2="4" />
+                      <line x1="10" y1="10" x2="4" y2="4" />
+                    </g>
+                  )}
+                </svg>
+              );
+            })()
+          )}
         </div>
       )}
 
@@ -738,7 +848,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                           : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                       }`}
                     >
-                      <Flag className="w-3.5 h-3.5" /> Misie ({hud.completedStoryIds.length}/20)
+                      <Flag className="w-3.5 h-3.5" /> Misie ({hud.completedStoryIds.length}/{STORY_MISSIONS.length})
                     </button>
                     <button
                       onClick={() => setActiveTab('world')}
@@ -764,6 +874,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button
+                      onClick={() => {
+                        const idx = RADIO_STATIONS.findIndex((s) => s.id === hud.radioId);
+                        const next = RADIO_STATIONS[(idx + 1) % RADIO_STATIONS.length];
+                        onSetRadio(next.id);
+                      }}
+                      className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs text-emerald-300 flex items-center gap-1 whitespace-nowrap"
+                      title="Prepnúť rádiovú stanicu (R)"
+                    >
+                      <Radio className="w-3.5 h-3.5" /> Rádio (R)
+                    </button>
+                    <button
                       onClick={onOpenPhone}
                       className="px-2.5 py-1 rounded bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-400/35 text-xs text-emerald-200 flex items-center gap-1 whitespace-nowrap"
                     >
@@ -774,18 +895,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                       className="px-2.5 py-1 rounded bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-400/35 text-xs text-cyan-200 flex items-center gap-1 whitespace-nowrap"
                     >
                       <MapIcon className="w-3.5 h-3.5" /> Mapa (M)
-                    </button>
-                    <button
-                      onClick={onClearWanted}
-                      className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs text-slate-200 flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <Shield className="w-3.5 h-3.5 text-sky-400" /> Zrušiť hľadanie
-                    </button>
-                    <button
-                      onClick={onHealAndRepair}
-                      className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs text-slate-200 flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Uzdraviť / Opraviť
                     </button>
                     <button
                       onClick={onToggleMute}
@@ -803,16 +912,29 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
                 {activeTab === 'vehicles' && (
                   <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto">
-                    {(Object.keys(VEHICLE_SPECS) as VehicleTypeId[]).map((vId) => (
-                      <button
-                        key={vId}
-                        onClick={() => onSpawnVehicle(vId)}
-                        className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] text-slate-100 flex items-center gap-1.5 whitespace-nowrap"
-                      >
-                        <span className="font-semibold">{VEHICLE_SPECS[vId].name}</span>
-                        <span className="text-slate-400">· {VEHICLE_SPECS[vId].category}</span>
-                      </button>
-                    ))}
+                    {(['taxi', 'brawler', 'terramax', 'veloce', 'solstice', 'plane', 'helicopter', 'jet'] as VehicleTypeId[]).map(
+                      (vId) => {
+                        const owned = hud.ownedVehicles.includes(vId);
+                        const spec = VEHICLE_SPECS[vId];
+                        return (
+                          <button
+                            key={vId}
+                            onClick={() => onSpawnVehicle(vId)}
+                            className={`px-2.5 py-1 rounded border text-[11px] flex items-center gap-1.5 whitespace-nowrap ${
+                              owned
+                                ? 'bg-slate-900 hover:bg-slate-800 border-emerald-500/40 text-slate-100'
+                                : 'bg-slate-950/80 hover:bg-slate-900 border-white/10 text-slate-400'
+                            }`}
+                          >
+                            {!owned && <Lock className="w-3 h-3 text-slate-500" />}
+                            <span className="font-semibold">{spec.name}</span>
+                            <span className={owned ? 'text-emerald-400' : 'text-amber-400/80 font-mono-num'}>
+                              · {owned ? 'Garáž' : `$${spec.price.toLocaleString()}`}
+                            </span>
+                          </button>
+                        );
+                      },
+                    )}
                   </div>
                 )}
 
@@ -828,7 +950,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                               : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
                           }`}
                         >
-                          Príbehové misie ({hud.completedStoryIds.length}/20)
+                          Príbehové misie ({hud.completedStoryIds.length}/{STORY_MISSIONS.length})
                         </button>
                         <button
                           onClick={() => setMissionSubTab('random')}
@@ -851,6 +973,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                         {STORY_MISSIONS.map((m) => {
                           const done = hud.completedStoryIds.includes(m.id);
                           const isActive = hud.mission.activeId === m.id;
+                          const locked = Boolean(
+                            m.requiredCompleted && hud.completedStoryIds.length < m.requiredCompleted,
+                          );
                           return (
                             <div
                               key={m.id}
@@ -859,7 +984,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                                   ? 'bg-amber-950/60 border-amber-400/50'
                                   : done
                                     ? 'bg-emerald-950/35 border-emerald-500/30'
-                                    : 'bg-slate-900/90 border-white/10'
+                                    : locked
+                                      ? 'bg-slate-950/70 border-white/5 opacity-70'
+                                      : 'bg-slate-900/90 border-white/10'
                               }`}
                             >
                               <div className="min-w-0">
@@ -867,31 +994,43 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                                   {done && (
                                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                                   )}
+                                  {!done && locked && (
+                                    <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                                  )}
                                   <span className="truncate">{m.title}</span>
                                 </div>
                                 <div className="text-[10px] text-slate-400 flex items-center gap-2">
                                   <span className="text-amber-300">{'★'.repeat(m.difficulty)}</span>
                                   <span>{m.durationLabel}</span>
                                   <span className="text-emerald-400 font-mono-num">+${m.reward}</span>
+                                  {locked && (
+                                    <span className="text-rose-300">Vyžaduje {m.requiredCompleted} misií</span>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <button
+                                  disabled={locked}
                                   onClick={() => onStartStoryMission(m.id)}
-                                  className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold"
+                                  className={`px-2.5 py-1 rounded text-[11px] font-bold ${
+                                    locked
+                                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                      : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                                  }`}
                                 >
-                                  {isActive ? 'Beží' : 'Spustiť'}
+                                  {isActive ? 'Beží' : locked ? 'Zamknuté' : 'Spustiť'}
                                 </button>
-                                {hud.onlineFriends.map((friend) => (
-                                  <button
-                                    key={friend.id}
-                                    onClick={() => onSendCoopInvite(friend.handle, m.id)}
-                                    className="px-2 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
-                                    title={`Zahrať misiu s kamarátom ${friend.handle}`}
-                                  >
-                                    <Users className="w-3 h-3" /> {friend.handle}
-                                  </button>
-                                ))}
+                                {!locked &&
+                                  hud.onlineFriends.map((friend) => (
+                                    <button
+                                      key={friend.id}
+                                      onClick={() => onSendCoopInvite(friend.handle, m.id)}
+                                      className="px-2 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
+                                      title={`Zahrať misiu s kamarátom ${friend.handle}`}
+                                    >
+                                      <Users className="w-3 h-3" /> {friend.handle}
+                                    </button>
+                                  ))}
                               </div>
                             </div>
                           );
@@ -969,7 +1108,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                               : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                           }`}
                         >
-                          3x Auto čas
+                          Auto čas (1m/s)
                         </button>
                       </div>
 
@@ -1064,20 +1203,38 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 )}
 
                 {activeTab === 'radio' && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {RADIO_STATIONS.map((st) => (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <span>
+                        Práve hrá:{' '}
+                        <span className="text-emerald-400 font-semibold">{hud.radioName}</span>
+                      </span>
                       <button
-                        key={st.id}
-                        onClick={() => onSetRadio(st.id)}
-                        className={`px-3 py-1.5 rounded text-xs whitespace-nowrap ${
-                          hud.radioId === st.id
-                            ? 'bg-emerald-400 text-slate-950 font-semibold'
-                            : 'bg-slate-900 text-slate-200 hover:bg-slate-800 border border-white/10'
-                        }`}
+                        onClick={() => {
+                          const idx = RADIO_STATIONS.findIndex((s) => s.id === hud.radioId);
+                          const next = RADIO_STATIONS[(idx + 1) % RADIO_STATIONS.length];
+                          onSetRadio(next.id);
+                        }}
+                        className="px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px]"
                       >
-                        {st.name} · <span className="opacity-75">{st.genre}</span>
+                        Ďalšia stanica (R)
                       </button>
-                    ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto">
+                      {RADIO_STATIONS.map((st) => (
+                        <button
+                          key={st.id}
+                          onClick={() => onSetRadio(st.id)}
+                          className={`px-2.5 py-1.5 rounded text-xs whitespace-nowrap ${
+                            hud.radioId === st.id
+                              ? 'bg-emerald-400 text-slate-950 font-semibold'
+                              : 'bg-slate-900 text-slate-200 hover:bg-slate-800 border border-white/10'
+                          }`}
+                        >
+                          {st.name} · <span className="opacity-75">{st.genre}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

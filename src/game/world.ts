@@ -12,6 +12,8 @@ export interface OrientedCollider {
   minY: number;
   maxY: number;
   yaw: number;
+  cos?: number;
+  sin?: number;
 }
 
 export interface CircleCollider {
@@ -29,6 +31,8 @@ export interface RoofDeck {
   halfD: number;
   y: number;
   yaw: number;
+  cos?: number;
+  sin?: number;
 }
 
 export interface RampSurface {
@@ -84,6 +88,15 @@ export interface CustomsBayZone {
   yaw: number;
 }
 
+export interface CloudPuffData {
+  x: number;
+  y: number;
+  z: number;
+  sx: number;
+  sy: number;
+  sz: number;
+}
+
 export interface WorldData {
   network: RoadNetwork;
   colliders: OrientedCollider[];
@@ -103,13 +116,32 @@ export interface WorldData {
   oceanMesh: THREE.Mesh;
   skyDomeMat: THREE.ShaderMaterial;
   cloudGroup: THREE.Group;
+  cloudInst: THREE.InstancedMesh;
+  cloudPuffs: CloudPuffData[];
   cloudMats: THREE.MeshStandardMaterial[];
   beaconMeshes: Record<string, THREE.Mesh>;
   missionBeacon: THREE.Mesh;
   gpsBeacon: THREE.Mesh;
+  queryNearbyColliders: (x: number, z: number, out: OrientedCollider[]) => void;
+  queryNearbyCircleColliders: (x: number, z: number, out: CircleCollider[]) => void;
   groundHeightAt: (x: number, z: number, actorY?: number) => number;
   isWaterAt: (x: number, z: number) => boolean;
   distanceToRoad: (x: number, z: number) => number;
+}
+
+function toMergeableNonIndexed(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const nonIdx = geo.index ? geo.toNonIndexed() : geo;
+  if (!nonIdx.attributes.normal) nonIdx.computeVertexNormals();
+  if (!nonIdx.attributes.uv) {
+    const count = nonIdx.attributes.position.count;
+    nonIdx.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(count * 2), 2));
+  }
+  for (const name of Object.keys(nonIdx.attributes)) {
+    if (name !== 'position' && name !== 'normal' && name !== 'uv') {
+      nonIdx.deleteAttribute(name);
+    }
+  }
+  return nonIdx;
 }
 
 function scaleBoxUvs(
@@ -570,12 +602,18 @@ export function buildPalmettoBayWorld(
 
   const nodeMaxWidth = new Map<number, number>();
   const nodeDegree = new Map<number, number>();
+  const curbGeos: THREE.BufferGeometry[] = [];
+  const pavedRoadGeos: THREE.BufferGeometry[] = [];
+  const dirtRoadGeos: THREE.BufferGeometry[] = [];
+  const plazaDiscGeos: THREE.BufferGeometry[] = [];
+  const crosswalkGeos: THREE.BufferGeometry[] = [];
+
   network.edges.forEach((edge, eIdx) => {
     nodeMaxWidth.set(edge.from, Math.max(nodeMaxWidth.get(edge.from) ?? 16, edge.width));
     nodeMaxWidth.set(edge.to, Math.max(nodeMaxWidth.get(edge.to) ?? 16, edge.width));
     nodeDegree.set(edge.from, (nodeDegree.get(edge.from) ?? 0) + 1);
     nodeDegree.set(edge.to, (nodeDegree.get(edge.to) ?? 0) + 1);
-    const segCount = Math.max(28, Math.ceil(edge.length / 2.8));
+    const segCount = Math.max(24, Math.ceil(edge.length / 3.2));
 
     if (!edge.isDirt) {
       // Raised coastal limestone sidewalk shoulder beneath urban/coastal paved roads
@@ -587,9 +625,7 @@ export function buildPalmettoBayWorld(
         0.065 + (eIdx % 5) * 0.002,
         terrainElevation,
       );
-      const curbMesh = new THREE.Mesh(curbGeo, roadShoulderMat);
-      curbMesh.receiveShadow = true;
-      scene.add(curbMesh);
+      curbGeos.push(toMergeableNonIndexed(curbGeo));
     }
 
     const yLayer = (edge.isDirt ? 0.18 : 0.125) + (eIdx % 11) * 0.005;
@@ -601,9 +637,11 @@ export function buildPalmettoBayWorld(
       yLayer,
       terrainElevation,
     );
-    const mesh = new THREE.Mesh(ribbonGeo, edge.isDirt ? dirtMat : roadMat);
-    mesh.receiveShadow = true;
-    scene.add(mesh);
+    if (edge.isDirt) {
+      dirtRoadGeos.push(toMergeableNonIndexed(ribbonGeo));
+    } else {
+      pavedRoadGeos.push(toMergeableNonIndexed(ribbonGeo));
+    }
   });
 
   network.nodes.forEach((n) => {
@@ -613,24 +651,20 @@ export function buildPalmettoBayWorld(
     const baseH = terrainElevation(n.x, n.z);
 
     if (!isTrail) {
-      const curbDisc = new THREE.Mesh(
-        new THREE.CircleGeometry(discRadius + 2.2, 28),
-        roadShoulderMat,
-      );
-      curbDisc.rotation.x = -Math.PI / 2;
-      curbDisc.position.set(n.x, baseH + 0.075, n.z);
-      curbDisc.receiveShadow = true;
-      scene.add(curbDisc);
+      const curbDiscGeo = new THREE.CircleGeometry(discRadius + 2.2, 24);
+      curbDiscGeo.rotateX(-Math.PI / 2);
+      curbDiscGeo.translate(n.x, baseH + 0.075, n.z);
+      curbGeos.push(toMergeableNonIndexed(curbDiscGeo));
     }
 
-    const disc = new THREE.Mesh(
-      new THREE.CircleGeometry(discRadius, 28),
-      isTrail ? dirtMat : plazaAsphaltMat,
-    );
-    disc.rotation.x = -Math.PI / 2;
-    disc.position.set(n.x, baseH + (isTrail ? 0.24 : 0.195), n.z);
-    disc.receiveShadow = true;
-    scene.add(disc);
+    const discGeo = new THREE.CircleGeometry(discRadius, 24);
+    discGeo.rotateX(-Math.PI / 2);
+    discGeo.translate(n.x, baseH + (isTrail ? 0.24 : 0.195), n.z);
+    if (isTrail) {
+      dirtRoadGeos.push(toMergeableNonIndexed(discGeo));
+    } else {
+      plazaDiscGeos.push(toMergeableNonIndexed(discGeo));
+    }
 
     // Subtle crisp crosswalk stripes on major urban intersections
     if (!isTrail && (nodeDegree.get(n.id) ?? 0) >= 3 && Math.hypot(n.x, n.z) > 45 && n.x > -800) {
@@ -640,19 +674,63 @@ export function buildPalmettoBayWorld(
         const cx = n.x + Math.sin(ang) * dist;
         const cz = n.z + Math.cos(ang) * dist;
         for (let s = -2; s <= 2; s++) {
-          const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 2.7), crosswalkStripeMat);
-          bar.rotation.x = -Math.PI / 2;
-          bar.rotation.z = ang;
-          bar.position.set(
+          const barGeo = new THREE.PlaneGeometry(0.95, 2.7);
+          barGeo.rotateX(-Math.PI / 2);
+          barGeo.rotateY(ang);
+          barGeo.translate(
             cx + Math.cos(ang) * (s * 1.9),
             baseH + 0.205,
             cz - Math.sin(ang) * (s * 1.9),
           );
-          scene.add(bar);
+          crosswalkGeos.push(toMergeableNonIndexed(barGeo));
         }
       }
     }
   });
+
+  if (curbGeos.length > 0) {
+    const mergedCurbs = mergeGeometries(curbGeos, false);
+    if (mergedCurbs) {
+      const m = new THREE.Mesh(mergedCurbs, roadShoulderMat);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+    curbGeos.forEach((g) => g.dispose());
+  }
+  if (pavedRoadGeos.length > 0) {
+    const mergedRoads = mergeGeometries(pavedRoadGeos, false);
+    if (mergedRoads) {
+      const m = new THREE.Mesh(mergedRoads, roadMat);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+    pavedRoadGeos.forEach((g) => g.dispose());
+  }
+  if (dirtRoadGeos.length > 0) {
+    const mergedDirt = mergeGeometries(dirtRoadGeos, false);
+    if (mergedDirt) {
+      const m = new THREE.Mesh(mergedDirt, dirtMat);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+    dirtRoadGeos.forEach((g) => g.dispose());
+  }
+  if (plazaDiscGeos.length > 0) {
+    const mergedPlaza = mergeGeometries(plazaDiscGeos, false);
+    if (mergedPlaza) {
+      const m = new THREE.Mesh(mergedPlaza, plazaAsphaltMat);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+    plazaDiscGeos.forEach((g) => g.dispose());
+  }
+  if (crosswalkGeos.length > 0) {
+    const mergedCross = mergeGeometries(crosswalkGeos, false);
+    if (mergedCross) {
+      scene.add(new THREE.Mesh(mergedCross, crosswalkStripeMat));
+    }
+    crosswalkGeos.forEach((g) => g.dispose());
+  }
 
   // 3. Marked Parking Lots
   const parkingLotMat = new THREE.MeshStandardMaterial({
@@ -1014,20 +1092,28 @@ export function buildPalmettoBayWorld(
   crossRunway.receiveShadow = true;
   scene.add(crossRunway);
 
-  // Runway Edge Navigation Lights
+  // Runway Edge Navigation Lights (Instanced -> 1 draw call)
   const rwLightMat = new THREE.MeshStandardMaterial({
     color: 0x38bdf8,
     emissive: 0x0ea5e9,
     emissiveIntensity: 1.0,
   });
   neonMats.push(rwLightMat);
+  const rwLampPos: Array<[number, number]> = [];
   for (let rx = -1070; rx <= -570; rx += 45) {
-    [-25, 25].forEach((dz) => {
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.45, 0.6), rwLightMat);
-      lamp.position.set(rx, 0.25, 1660 + dz);
-      scene.add(lamp);
-    });
+    rwLampPos.push([rx, 1660 - 25], [rx, 1660 + 25]);
   }
+  const rwLampInst = new THREE.InstancedMesh(new THREE.BoxGeometry(0.6, 0.45, 0.6), rwLightMat, rwLampPos.length);
+  const _tmpDummy = new THREE.Object3D();
+  rwLampPos.forEach(([rx, rz], i) => {
+    _tmpDummy.position.set(rx, 0.25, rz);
+    _tmpDummy.rotation.set(0, 0, 0);
+    _tmpDummy.scale.set(1, 1, 1);
+    _tmpDummy.updateMatrix();
+    rwLampInst.setMatrixAt(i, _tmpDummy.matrix);
+  });
+  rwLampInst.instanceMatrix.needsUpdate = true;
+  scene.add(rwLampInst);
 
   // Walk-In Airport Passenger Terminal (-720, 1420)
   const termWallMat = new THREE.MeshStandardMaterial({
@@ -1220,13 +1306,20 @@ export function buildPalmettoBayWorld(
   roofDecks.push({ cx: 945, cz: 0, halfW: 95, halfD: 9, y: 1.05, yaw: 0 });
 
   const postMat = new THREE.MeshStandardMaterial({ color: 0x452b18, roughness: 0.9 });
+  const postPos: Array<[number, number]> = [];
   for (let px = 860; px <= 1030; px += 18) {
-    [-8, 8].forEach((pz) => {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.45, 3.6, 8), postMat);
-      post.position.set(px, -0.5, pz);
-      scene.add(post);
-    });
+    postPos.push([px, -8], [px, 8]);
   }
+  const postInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4, 0.45, 3.6, 8), postMat, postPos.length);
+  postPos.forEach(([px, pz], i) => {
+    _tmpDummy.position.set(px, -0.5, pz);
+    _tmpDummy.rotation.set(0, 0, 0);
+    _tmpDummy.scale.set(1, 1, 1);
+    _tmpDummy.updateMatrix();
+    postInst.setMatrixAt(i, _tmpDummy.matrix);
+  });
+  postInst.instanceMatrix.needsUpdate = true;
+  scene.add(postInst);
 
   const portPadGeo = new THREE.BoxGeometry(460, 0.24, 160);
   scaleBoxUvs(portPadGeo, 460, 0.24, 160, 28, 28);
@@ -1280,7 +1373,39 @@ export function buildPalmettoBayWorld(
   colliders.push({ cx: 110, cz: 1130, halfW: 1.2, halfD: 1.2, minY: 0, maxY: 32, yaw: 0 });
   colliders.push({ cx: 134, cz: 1130, halfW: 1.2, halfD: 1.2, minY: 0, maxY: 32, yaw: 0 });
 
-  // 8. Solid Rooftop Skyline Buildings Helper (Calibrated PBR — Zero Washout!)
+  // 8. Solid Rooftop Skyline Buildings Helper (Calibrated PBR + Shared Facade Materials!)
+  const facadeMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+  const getSharedFacadeMat = (facadeIdx: number, tint = 0xd8dee9): THREE.MeshStandardMaterial => {
+    const fIdx = facadeIdx % textures.buildingWindows.length;
+    const key = `${fIdx}_${tint}`;
+    let mat = facadeMaterialCache.get(key);
+    if (!mat) {
+      mat = new THREE.MeshStandardMaterial({
+        color: tint,
+        map: textures.buildingWindows[fIdx],
+        bumpMap: textures.buildingBump,
+        bumpScale: 0.18,
+        emissive: 0xffd27d,
+        emissiveMap: textures.buildingEmissives[fIdx],
+        emissiveIntensity: 0.02,
+        roughness: 0.86,
+        metalness: 0.06,
+        envMapIntensity: 0.2,
+      });
+      facadeMaterialCache.set(key, mat);
+      buildingEmissiveMats.push(mat);
+    }
+    return mat;
+  };
+  const sharedRoofTrimMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.65,
+    metalness: 0.35,
+    envMapIntensity: 0.4,
+  });
+  const sharedDomeMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5, metalness: 0.45 });
+  const sharedSpireMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4, metalness: 0.6 });
+
   const addBuilding = (
     cx: number,
     cz: number,
@@ -1290,21 +1415,7 @@ export function buildPalmettoBayWorld(
     facadeIdx: number,
     tint = 0xd8dee9,
   ) => {
-    const tex = textures.buildingWindows[facadeIdx % textures.buildingWindows.length];
-    const emTex = textures.buildingEmissives[facadeIdx % textures.buildingEmissives.length];
-    const mat = new THREE.MeshStandardMaterial({
-      color: tint,
-      map: tex,
-      bumpMap: textures.buildingBump,
-      bumpScale: 0.18,
-      emissive: 0xffd27d,
-      emissiveMap: emTex,
-      emissiveIntensity: 0.02,
-      roughness: 0.86,
-      metalness: 0.06,
-      envMapIntensity: 0.2,
-    });
-    buildingEmissiveMats.push(mat);
+    const mat = getSharedFacadeMat(facadeIdx, tint);
 
     const bGeo = new THREE.BoxGeometry(w, h, d);
     scaleBoxUvs(bGeo, w, h, d, 22, 26);
@@ -1316,25 +1427,20 @@ export function buildPalmettoBayWorld(
 
     const roofTrim = new THREE.Mesh(
       new THREE.BoxGeometry(w + 0.8, 0.8, d + 0.8),
-      new THREE.MeshStandardMaterial({
-        color: 0x1e293b,
-        roughness: 0.65,
-        metalness: 0.35,
-        envMapIntensity: 0.4,
-      }),
+      sharedRoofTrimMat,
     );
     roofTrim.position.set(cx, h + 0.4, cz);
     scene.add(roofTrim);
 
     if (h >= 36) {
       const domeCap = new THREE.Mesh(
-        new THREE.CylinderGeometry(Math.min(w, d) * 0.18, Math.min(w, d) * 0.22, 1.6, 16),
-        new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5, metalness: 0.45 }),
+        new THREE.CylinderGeometry(Math.min(w, d) * 0.18, Math.min(w, d) * 0.22, 1.6, 12),
+        sharedDomeMat,
       );
       domeCap.position.set(cx, h + 1.5, cz);
       const spire = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.3, 6.5, 10),
-        new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4, metalness: 0.6 }),
+        new THREE.CylinderGeometry(0.12, 0.3, 6.5, 8),
+        sharedSpireMat,
       );
       spire.position.set(cx, h + 5.0, cz);
       scene.add(domeCap, spire);
@@ -1415,6 +1521,12 @@ export function buildPalmettoBayWorld(
     roughness: 0.72,
     envMapIntensity: 0.28,
   });
+  const sharedCeilingLightMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    emissive: 0xfde68a,
+    emissiveIntensity: 0.32,
+    roughness: 0.85,
+  });
 
   SHOPS.forEach((shop) => {
     const isArmory = shop.category === 'armory';
@@ -1443,28 +1555,10 @@ export function buildPalmettoBayWorld(
       metalness: 0.05,
       envMapIntensity: 0.25,
     });
-    const facadeIdx =
-      isClothing || isCafe ? 1 : isSafehouse || isClub ? 2 : isBank || isPrecinct ? 0 : isCustoms ? 3 : 4;
-    const extMat = new THREE.MeshStandardMaterial({
-      color: 0xd1d5db,
-      map: textures.buildingWindows[facadeIdx],
-      bumpMap: textures.buildingBump,
-      bumpScale: 0.16,
-      emissive: 0xffd27d,
-      emissiveMap: textures.buildingEmissives[facadeIdx],
-      emissiveIntensity: 0.02,
-      roughness: 0.86,
-      metalness: 0.06,
-      envMapIntensity: 0.2,
-    });
-    buildingEmissiveMats.push(extMat);
+    const facadeIdx = isBank || isClub || isDealership ? 0 : 1;
+    const extMat = getSharedFacadeMat(facadeIdx, 0xd1d5db);
 
-    const roofSlateMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.85,
-      metalness: 0.12,
-      envMapIntensity: 0.18,
-    });
+    const roofSlateMat = sharedRoofTrimMat;
 
     const sGroup = new THREE.Group();
     sGroup.position.set(centerX, 0, centerZ);
@@ -1494,12 +1588,7 @@ export function buildPalmettoBayWorld(
     [-bw * 0.26, bw * 0.26].forEach((lx) => {
       const strip = new THREE.Mesh(
         new THREE.BoxGeometry(1.4, 0.12, bd * 0.7),
-        new THREE.MeshStandardMaterial({
-          color: 0xfef3c7,
-          emissive: 0xfde68a,
-          emissiveIntensity: 0.32,
-          roughness: 0.85,
-        }),
+        sharedCeilingLightMat,
       );
       strip.position.set(lx, bh - 0.4, 0);
       sGroup.add(strip);
@@ -2763,23 +2852,33 @@ export function buildPalmettoBayWorld(
   pineFoliageInst.computeBoundingSphere();
   scene.add(pineTrunkInst, pineFoliageInst);
 
-  // 13. Curved Gooseneck Streetlights along Paved Roads (Strict Road & Building Clearance + Tight Pole Colliders!)
+  // 13. Curved Gooseneck Streetlights along Paved Roads (Instanced -> 3 draw calls total!)
   const poleMat = new THREE.MeshStandardMaterial({
     color: 0x334155,
     metalness: 0.68,
     roughness: 0.34,
     envMapIntensity: 0.48,
   });
-  const poleGeo = new THREE.CylinderGeometry(0.11, 0.18, 6.6, 10);
+  const sharedStreetBulbMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    emissive: 0xfde047,
+    emissiveIntensity: 0.25,
+  });
+  streetLightBulbs.push(sharedStreetBulbMat);
+
+  const poleGeo = new THREE.CylinderGeometry(0.11, 0.18, 6.6, 8);
+  poleGeo.translate(0, 3.3, 0);
   const armCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(0, 6.5, 0),
     new THREE.Vector3(0, 7.35, 0.38),
     new THREE.Vector3(0, 7.25, 1.35),
   ]);
-  const armGeo = new THREE.TubeGeometry(armCurve, 8, 0.085, 8, false);
-  const lampCapGeo = new THREE.CapsuleGeometry(0.16, 0.48, 5, 10);
+  const armGeo = new THREE.TubeGeometry(armCurve, 6, 0.085, 6, false);
+  const lampCapGeo = new THREE.CapsuleGeometry(0.16, 0.48, 4, 8);
   lampCapGeo.rotateX(Math.PI / 2);
+  lampCapGeo.translate(0, 7.12, 1.48);
 
+  const lightPlacements: Array<{ lx: number; lz: number; yaw: number }> = [];
   network.edges.forEach((edge, eIdx) => {
     if (edge.isDirt || eIdx % 2 !== 0) return;
     const mid = edge.curve.getPointAt(0.5);
@@ -2788,28 +2887,34 @@ export function buildPalmettoBayWorld(
     const lx = mid.x + side.x * (edge.width * 0.5 + 1.8);
     const lz = mid.z + side.z * (edge.width * 0.5 + 1.8);
     if (roadEdgeClearance(lx, lz) < 1.2 || isPointInsideOccupied(lx, lz, 1.5)) return;
-
-    const bulbMat = new THREE.MeshStandardMaterial({
-      color: 0xfef3c7,
-      emissive: 0xfde047,
-      emissiveIntensity: 0.25,
-    });
-    streetLightBulbs.push(bulbMat);
-
-    const group = new THREE.Group();
-    group.position.set(lx, 0, lz);
-    group.rotation.y = Math.atan2(-side.x, -side.z);
-    const pole = new THREE.Mesh(poleGeo, poleMat);
-    pole.position.y = 3.3;
-    const arm = new THREE.Mesh(armGeo, poleMat);
-    const bulb = new THREE.Mesh(lampCapGeo, bulbMat);
-    bulb.position.set(0, 7.12, 1.48);
-    group.add(pole, arm, bulb);
-    scene.add(group);
+    lightPlacements.push({ lx, lz, yaw: Math.atan2(-side.x, -side.z) });
     circleColliders.push({ cx: lx, cz: lz, r: 0.18, minY: 0, maxY: 7.2 });
   });
 
-  // 14. Smooth Organic Volumetric Sky Clouds
+  if (lightPlacements.length > 0) {
+    const poleInst = new THREE.InstancedMesh(poleGeo, poleMat, lightPlacements.length);
+    const armInst = new THREE.InstancedMesh(armGeo, poleMat, lightPlacements.length);
+    const bulbInst = new THREE.InstancedMesh(lampCapGeo, sharedStreetBulbMat, lightPlacements.length);
+    const lDummy = new THREE.Object3D();
+    lightPlacements.forEach((lp, i) => {
+      lDummy.position.set(lp.lx, 0, lp.lz);
+      lDummy.rotation.set(0, lp.yaw, 0);
+      lDummy.scale.set(1, 1, 1);
+      lDummy.updateMatrix();
+      poleInst.setMatrixAt(i, lDummy.matrix);
+      armInst.setMatrixAt(i, lDummy.matrix);
+      bulbInst.setMatrixAt(i, lDummy.matrix);
+    });
+    poleInst.instanceMatrix.needsUpdate = true;
+    armInst.instanceMatrix.needsUpdate = true;
+    bulbInst.instanceMatrix.needsUpdate = true;
+    poleInst.computeBoundingSphere();
+    armInst.computeBoundingSphere();
+    bulbInst.computeBoundingSphere();
+    scene.add(poleInst, armInst, bulbInst);
+  }
+
+  // 14. Smooth Organic Volumetric Sky Clouds (Instanced -> 1 draw call!)
   const cloudGroup = new THREE.Group();
   const cloudMats: THREE.MeshStandardMaterial[] = [];
   const cloudMat = new THREE.MeshStandardMaterial({
@@ -2823,29 +2928,40 @@ export function buildPalmettoBayWorld(
   });
   cloudMats.push(cloudMat);
 
+  const cloudPuffs: CloudPuffData[] = [];
+  const puffOffsets: Array<[number, number, number, number]> = [
+    [-34, -2, -6, 30],
+    [0, 8, 4, 42],
+    [34, 1, -8, 32],
+    [12, 12, 14, 28],
+  ];
   for (let c = 0; c < 46; c++) {
-    const cluster = new THREE.Group();
     const cx = -2300 + ((c * 373) % 4200);
     const cz = -2100 + ((c * 491) % 4200);
     const cy = 240 + (c % 5) * 32;
-    cluster.position.set(cx, cy, cz);
-    const puffOffsets: Array<[number, number, number, number]> = [
-      [-34, -2, -6, 30],
-      [0, 8, 4, 42],
-      [34, 1, -8, 32],
-      [12, 12, 14, 28],
-    ];
     puffOffsets.forEach(([ox, oy, oz, rad]) => {
-      const puff = new THREE.Mesh(
-        new THREE.SphereGeometry(rad, 14, 10),
-        cloudMat,
-      );
-      puff.scale.set(1.85, 0.56, 1.35);
-      puff.position.set(ox, oy, oz);
-      cluster.add(puff);
+      cloudPuffs.push({
+        x: cx + ox,
+        y: cy + oy,
+        z: cz + oz,
+        sx: rad * 1.85,
+        sy: rad * 0.56,
+        sz: rad * 1.35,
+      });
     });
-    cloudGroup.add(cluster);
   }
+  const cloudInst = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 12, 8), cloudMat, cloudPuffs.length);
+  cloudInst.frustumCulled = false;
+  const cloudDummy = new THREE.Object3D();
+  cloudPuffs.forEach((p, i) => {
+    cloudDummy.position.set(p.x, p.y, p.z);
+    cloudDummy.rotation.set(0, 0, 0);
+    cloudDummy.scale.set(p.sx, p.sy, p.sz);
+    cloudDummy.updateMatrix();
+    cloudInst.setMatrixAt(i, cloudDummy.matrix);
+  });
+  cloudInst.instanceMatrix.needsUpdate = true;
+  cloudGroup.add(cloudInst);
   scene.add(cloudGroup);
 
   // 15. Mission & GPS Beacons
@@ -2875,7 +2991,127 @@ export function buildPalmettoBayWorld(
   gpsBeacon.visible = false;
   scene.add(gpsBeacon);
 
-  // 16. Ground Height Query Supporting Hills, Bridges, Oriented Rooftops, Elevators & Ramps
+  // 16. Precompute Trig & Spatial Hash Grids for O(1) Collisions & Ground Height!
+  const GRID_CELL = 48;
+  const gridKey = (cx: number, cz: number) => ((cx + 512) << 12) ^ (cz + 512);
+
+  const colliderGrid = new Map<number, number[]>();
+  colliders.forEach((b, idx) => {
+    b.cos = Math.cos(b.yaw);
+    b.sin = Math.sin(b.yaw);
+    const maxExt = Math.hypot(b.halfW, b.halfD) + 2;
+    const minCx = Math.floor((b.cx - maxExt) / GRID_CELL);
+    const maxCx = Math.floor((b.cx + maxExt) / GRID_CELL);
+    const minCz = Math.floor((b.cz - maxExt) / GRID_CELL);
+    const maxCz = Math.floor((b.cz + maxExt) / GRID_CELL);
+    for (let gx = minCx; gx <= maxCx; gx++) {
+      for (let gz = minCz; gz <= maxCz; gz++) {
+        const k = gridKey(gx, gz);
+        let bucket = colliderGrid.get(k);
+        if (!bucket) {
+          bucket = [];
+          colliderGrid.set(k, bucket);
+        }
+        bucket.push(idx);
+      }
+    }
+  });
+
+  const circleGrid = new Map<number, number[]>();
+  circleColliders.forEach((c, idx) => {
+    const ext = c.r + 2;
+    const minCx = Math.floor((c.cx - ext) / GRID_CELL);
+    const maxCx = Math.floor((c.cx + ext) / GRID_CELL);
+    const minCz = Math.floor((c.cz - ext) / GRID_CELL);
+    const maxCz = Math.floor((c.cz + ext) / GRID_CELL);
+    for (let gx = minCx; gx <= maxCx; gx++) {
+      for (let gz = minCz; gz <= maxCz; gz++) {
+        const k = gridKey(gx, gz);
+        let bucket = circleGrid.get(k);
+        if (!bucket) {
+          bucket = [];
+          circleGrid.set(k, bucket);
+        }
+        bucket.push(idx);
+      }
+    }
+  });
+
+  const roofGrid = new Map<number, number[]>();
+  roofDecks.forEach((rd, idx) => {
+    rd.cos = Math.cos(-rd.yaw);
+    rd.sin = Math.sin(-rd.yaw);
+    const maxExt = Math.hypot(rd.halfW, rd.halfD) + 1;
+    const minCx = Math.floor((rd.cx - maxExt) / GRID_CELL);
+    const maxCx = Math.floor((rd.cx + maxExt) / GRID_CELL);
+    const minCz = Math.floor((rd.cz - maxExt) / GRID_CELL);
+    const maxCz = Math.floor((rd.cz + maxExt) / GRID_CELL);
+    for (let gx = minCx; gx <= maxCx; gx++) {
+      for (let gz = minCz; gz <= maxCz; gz++) {
+        const k = gridKey(gx, gz);
+        let bucket = roofGrid.get(k);
+        if (!bucket) {
+          bucket = [];
+          roofGrid.set(k, bucket);
+        }
+        bucket.push(idx);
+      }
+    }
+  });
+
+  const colliderStamps = new Uint32Array(colliders.length + 1);
+  const circleStamps = new Uint32Array(circleColliders.length + 1);
+  let queryToken = 1;
+
+  const queryNearbyColliders = (x: number, z: number, out: OrientedCollider[]) => {
+    out.length = 0;
+    const token = ++queryToken;
+    if (token > 0xfffffffe) {
+      colliderStamps.fill(0);
+      queryToken = 1;
+    }
+    const cx = Math.floor(x / GRID_CELL);
+    const cz = Math.floor(z / GRID_CELL);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bucket = colliderGrid.get(gridKey(cx + dx, cz + dz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const idx = bucket[i];
+          if (colliderStamps[idx] !== token) {
+            colliderStamps[idx] = token;
+            out.push(colliders[idx]);
+          }
+        }
+      }
+    }
+  };
+
+  const queryNearbyCircleColliders = (x: number, z: number, out: CircleCollider[]) => {
+    out.length = 0;
+    const token = ++queryToken;
+    if (token > 0xfffffffe) {
+      circleStamps.fill(0);
+      queryToken = 1;
+    }
+    const cx = Math.floor(x / GRID_CELL);
+    const cz = Math.floor(z / GRID_CELL);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bucket = circleGrid.get(gridKey(cx + dx, cz + dz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const idx = bucket[i];
+          if (circleStamps[idx] !== token) {
+            circleStamps[idx] = token;
+            out.push(circleColliders[idx]);
+          }
+        }
+      }
+    }
+  };
+
+  // 17. Ground Height Query Supporting Hills, Bridges, Spatial Rooftops, Elevators & Ramps
   const groundHeightAt = (x: number, z: number, actorY = 999): number => {
     let h = Math.max(0.08, terrainElevation(x, z));
 
@@ -2884,6 +3120,8 @@ export function buildPalmettoBayWorld(
       const ov = overpasses[i];
       const dx = x - ov.x;
       const dz = z - ov.z;
+      const maxSpan = ov.deckLength * 0.5 + ov.rampLength + ov.width;
+      if (Math.abs(dx) > maxSpan || Math.abs(dz) > maxSpan) continue;
       const cos = Math.cos(-ov.yaw);
       const sin = Math.sin(-ov.yaw);
       const lx = dx * cos - dz * sin;
@@ -2914,18 +3152,21 @@ export function buildPalmettoBayWorld(
       }
     }
 
-    // Oriented Solid Rooftops & Multi-Floor Mezzanine Decks
-    for (let i = 0; i < roofDecks.length; i++) {
-      const rd = roofDecks[i];
-      const dx = x - rd.cx;
-      const dz = z - rd.cz;
-      const cos = Math.cos(-rd.yaw);
-      const sin = Math.sin(-rd.yaw);
-      const lx = dx * cos - dz * sin;
-      const lz = dx * sin + dz * cos;
-      if (Math.abs(lx) <= rd.halfW && Math.abs(lz) <= rd.halfD) {
-        if (actorY >= rd.y - 1.75) {
-          h = Math.max(h, rd.y);
+    // Oriented Solid Rooftops & Multi-Floor Mezzanine Decks (via spatial grid!)
+    const rBucket = roofGrid.get(gridKey(Math.floor(x / GRID_CELL), Math.floor(z / GRID_CELL)));
+    if (rBucket) {
+      for (let i = 0; i < rBucket.length; i++) {
+        const rd = roofDecks[rBucket[i]];
+        const dx = x - rd.cx;
+        const dz = z - rd.cz;
+        const cos = rd.cos ?? Math.cos(-rd.yaw);
+        const sin = rd.sin ?? Math.sin(-rd.yaw);
+        const lx = dx * cos - dz * sin;
+        const lz = dx * sin + dz * cos;
+        if (Math.abs(lx) <= rd.halfW && Math.abs(lz) <= rd.halfD) {
+          if (actorY >= rd.y - 1.75) {
+            h = Math.max(h, rd.y);
+          }
         }
       }
     }
@@ -2935,6 +3176,7 @@ export function buildPalmettoBayWorld(
       const rm = ramps[i];
       const dx = x - rm.x;
       const dz = z - rm.z;
+      if (Math.abs(dx) > rm.length + rm.width || Math.abs(dz) > rm.length + rm.width) continue;
       const cos = Math.cos(-rm.yaw);
       const sin = Math.sin(-rm.yaw);
       const lx = dx * cos - dz * sin;
@@ -2978,10 +3220,14 @@ export function buildPalmettoBayWorld(
     oceanMesh,
     skyDomeMat,
     cloudGroup,
+    cloudInst,
+    cloudPuffs,
     cloudMats,
     beaconMeshes,
     missionBeacon,
     gpsBeacon,
+    queryNearbyColliders,
+    queryNearbyCircleColliders,
     groundHeightAt,
     isWaterAt,
     distanceToRoad,

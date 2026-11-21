@@ -1,7 +1,4 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SoundEngine } from './audio';
 import { buildHiddenMissionPlayableDef, HIDDEN_MISSIONS, STORY_MISSIONS } from './missions';
 import {
@@ -16,7 +13,12 @@ import {
   setVehicleNeon,
   VehicleRig,
 } from './models';
-import { computeGpsRoute, getRightLanePointOnEdge, RoadNetwork } from './roadNetwork';
+import {
+  computeGpsRoute,
+  getRightLanePointOnEdge,
+  projectPointOntoRoad,
+  RoadNetwork,
+} from './roadNetwork';
 import { createProceduralTextures, ProceduralTexturePack } from './textures';
 import {
   ActionBinding,
@@ -36,6 +38,7 @@ import {
   GamepadInputCode,
   getReputationRank,
   GpsPoint,
+  GslMissionTelemetry,
   HiddenMissionDef,
   HudSnapshot,
   MinimapBlip,
@@ -57,7 +60,13 @@ import {
   WeaponId,
   WeatherPreset,
 } from './types';
-import { buildPalmettoBayWorld, ElevatorSystem, WorldData } from './world';
+import {
+  buildPalmettoBayWorld,
+  CircleCollider,
+  ElevatorSystem,
+  OrientedCollider,
+  WorldData,
+} from './world';
 
 const SAVE_KEY = 'sunstate_outlaws_save_v2';
 
@@ -116,6 +125,10 @@ interface VehicleEntity {
   aiReverse: boolean;
   aiSampleIdx: number;
   aiCooldown: number;
+  airTime: number;
+  wasAirborne: boolean;
+  airStartX: number;
+  airStartZ: number;
 }
 
 interface NpcEntity {
@@ -180,9 +193,13 @@ interface ActiveCutsceneInternal {
   onFinish: () => void;
 }
 
-// Pre-allocated math helpers
+// Pre-allocated math & spatial-query scratch helpers (zero per-frame GC churn)
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _aimCamOrigin = new THREE.Vector3();
+const _aimCamDir = new THREE.Vector3();
+const _aimRayOrigin = new THREE.Vector3();
+const _aimTargetPt = new THREE.Vector3();
 const _camDesired = new THREE.Vector3();
 const _camLook = new THREE.Vector3();
 const _skyColor = new THREE.Color();
@@ -194,6 +211,12 @@ const _sunDawn = new THREE.Color(0xfde6c4);
 const _sunNoon = new THREE.Color(0xfdf8ee);
 const _sunGolden = new THREE.Color(0xf59e56);
 const _sunNight = new THREE.Color(0x64748b);
+const _stormTint = new THREE.Color(0x3b485b);
+const _fogTint = new THREE.Color(0x94a3b8);
+const _lightningTint = new THREE.Color(0xdbeafe);
+const _cloudDummy = new THREE.Object3D();
+const _nearbyColliders: OrientedCollider[] = [];
+const _nearbyCircles: CircleCollider[] = [];
 
 function cloneDefaultControls(): ControlsConfig {
   return JSON.parse(JSON.stringify(DEFAULT_CONTROLS_CONFIG)) as ControlsConfig;
@@ -213,6 +236,7 @@ function createDefaultAccount(id: CharacterId): CharacterAccount {
     unlockedWeapons: { fists: true, pistol: true, smg: id === 'elena' },
     ammo: { fists: 0, pistol: 84, smg: id === 'elena' ? 120 : 0 },
     hasParachute: id === 'kairo',
+    ownedVehicles: ['taxi'],
   };
 }
 
@@ -223,8 +247,6 @@ export class GameEngine {
   private onGamepadUiAction?: (action: GamepadUiAction) => void;
 
   private renderer!: THREE.WebGLRenderer;
-  private composer: EffectComposer | null = null;
-  private bloomPass: UnrealBloomPass | null = null;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private envRT: THREE.WebGLRenderTarget | null = null;
@@ -250,10 +272,15 @@ export class GameEngine {
   private fpsAccum = 0;
   private fpsFrames = 0;
   private currentFps = 60;
+  private shadowFrame = 0;
+  private shadowUpdateInterval = 2;
+  private lowFpsStreak = 0;
+  private adaptiveDprCap = 1.25;
 
   // Input & Gamepad
   private keys: Record<string, boolean> = {};
   private mouseDown = false;
+  private mouseAiming = false;
   private isDraggingLook = false;
   private lastPointerX = 0;
   private lastPointerY = 0;
@@ -261,6 +288,7 @@ export class GameEngine {
   private gamepadConnected = false;
   private prevGamepadButtons: boolean[] = [];
   private controlsConfig: ControlsConfig = cloneDefaultControls();
+  private cachedControlsSnapshot: ControlsConfig | null = null;
 
   // Camera
   private cameraMode: CameraMode = 'third';
@@ -287,6 +315,7 @@ export class GameEngine {
   private onGround = true;
   private parachuteOpen = false;
   private walkCycle = 0;
+  private prevWalkSin = 0;
   private health = 100;
   private armor = 50;
   private godMode = false;
@@ -298,12 +327,30 @@ export class GameEngine {
   private fireCooldown = 0;
   private weaponRecoil = 0;
   private muzzleTimer = 0;
+  private isAiming = false;
+  private hitMarkerTimer = 0;
 
-  // Vehicles & NPCs
+  // Vehicles, Transmission & NPCs
   private vehicles: VehicleEntity[] = [];
   private npcs: NpcEntity[] = [];
   private currentVehicle: VehicleEntity | null = null;
   private nextEntityId = 1;
+  private prevVehSpeed = 0;
+  private prevVehYaw = 0;
+  private currentGear = 1;
+  private engineRpm = 0.2;
+  private shiftDipTimer = 0;
+  private lastThrottle = 0;
+  private atmoLastWindowEmissive = -1;
+  private atmoLastBulbEmissive = -1;
+  private atmoLastHeadlightEmissive = -1;
+  private gslState = {
+    active: false,
+    vanId: null as number | null,
+    packageDamage: 0,
+    onRoad: true,
+    graceTimer: 0,
+  };
 
   // Particles & Tracers
   private particles: Particle[] = [];
@@ -429,6 +476,11 @@ export class GameEngine {
       if (saved.accounts?.kairo) {
         this.accounts.kairo = { ...createDefaultAccount('kairo'), ...saved.accounts.kairo };
       }
+      (['dante', 'elena', 'kairo'] as CharacterId[]).forEach((cId) => {
+        if (!Array.isArray(this.accounts[cId].ownedVehicles) || this.accounts[cId].ownedVehicles.length === 0) {
+          this.accounts[cId].ownedVehicles = ['taxi'];
+        }
+      });
       const activeAcc = this.accounts[this.characterId];
       const activeProf = CHARACTERS[this.characterId];
       this.playerX = typeof activeAcc.savedX === 'number' ? activeAcc.savedX : activeProf.homeSpawnX;
@@ -546,12 +598,15 @@ export class GameEngine {
       powerPreference: 'high-performance',
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(
+      this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, this.adaptiveDprCap),
+    );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.86;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -595,7 +650,7 @@ export class GameEngine {
     pmremGenerator.dispose();
 
     // Long far clipping plane for huge 5600m world & high-altitude aviation!
-    this.camera = new THREE.PerspectiveCamera(this.camFov, width / height, 0.15, 4800);
+    this.camera = new THREE.PerspectiveCamera(this.camFov, width / height, 0.22, 4800);
 
     this.hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x263142, 0.48);
     this.scene.add(this.hemiLight);
@@ -603,17 +658,17 @@ export class GameEngine {
     this.sunLight = new THREE.DirectionalLight(0xfdf8ee, 1.05);
     this.sunLight.position.set(160, 140, 95);
     this.sunLight.castShadow = !this.isSoftwareGl;
-    const shadowRes = this.isSoftwareGl ? 1024 : 2048;
+    const shadowRes = 1024;
     this.sunLight.shadow.mapSize.set(shadowRes, shadowRes);
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 480;
-    const d = 160;
+    this.sunLight.shadow.camera.far = 360;
+    const d = 95;
     this.sunLight.shadow.camera.left = -d;
     this.sunLight.shadow.camera.right = d;
     this.sunLight.shadow.camera.top = d;
     this.sunLight.shadow.camera.bottom = -d;
-    this.sunLight.shadow.bias = -0.00045;
-    this.sunLight.shadow.normalBias = 0.022;
+    this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.normalBias = 0.024;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
@@ -623,18 +678,6 @@ export class GameEngine {
 
     this.muzzleLight = new THREE.PointLight(0xfef08a, 0, 14);
     this.scene.add(this.muzzleLight);
-
-    if (!this.isSoftwareGl) {
-      this.composer = new EffectComposer(this.renderer);
-      this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(width, height),
-        0.07,
-        0.16,
-        1.12,
-      );
-      this.composer.addPass(this.bloomPass);
-    }
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.textures = createProceduralTextures(maxAniso);
@@ -726,17 +769,7 @@ export class GameEngine {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
     if (this.quality === 'high') {
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      this.renderer.shadowMap.enabled = true;
-      this.sunLight.castShadow = true;
-      if (this.sunLight.shadow.mapSize.x !== 2048) {
-        this.sunLight.shadow.mapSize.set(2048, 2048);
-        this.sunLight.shadow.map?.dispose();
-        this.sunLight.shadow.map = null;
-      }
-      if (this.bloomPass) this.bloomPass.enabled = true;
-    } else if (this.quality === 'medium') {
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.adaptiveDprCap));
       this.renderer.shadowMap.enabled = true;
       this.sunLight.castShadow = true;
       if (this.sunLight.shadow.mapSize.x !== 1024) {
@@ -744,15 +777,23 @@ export class GameEngine {
         this.sunLight.shadow.map?.dispose();
         this.sunLight.shadow.map = null;
       }
-      if (this.bloomPass) this.bloomPass.enabled = false;
+      this.renderer.shadowMap.needsUpdate = true;
+    } else if (this.quality === 'medium') {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
+      this.renderer.shadowMap.enabled = true;
+      this.sunLight.castShadow = true;
+      if (this.sunLight.shadow.mapSize.x !== 512) {
+        this.sunLight.shadow.mapSize.set(512, 512);
+        this.sunLight.shadow.map?.dispose();
+        this.sunLight.shadow.map = null;
+      }
+      this.renderer.shadowMap.needsUpdate = true;
     } else {
       this.renderer.setPixelRatio(1);
       this.renderer.shadowMap.enabled = false;
       this.sunLight.castShadow = false;
-      if (this.bloomPass) this.bloomPass.enabled = false;
     }
     this.renderer.setSize(width, height);
-    this.composer?.setSize(width, height);
   }
 
   private rebuildPlayerCharacter() {
@@ -873,7 +914,11 @@ export class GameEngine {
     const rig = createVehicleMesh(spec, this.textures.contactShadow, customColor, {
       taxiSign: this.textures.taxiSign,
       emsCross: this.textures.emsCross,
+      gslLogo: this.textures.gslLogo,
     });
+    if (this.atmoLastHeadlightEmissive >= 0) {
+      rig.headlightMat.emissiveIntensity = this.atmoLastHeadlightEmissive;
+    }
     const y = this.world.groundHeightAt(x, z, 10);
     rig.group.position.set(x, y, z);
     rig.group.rotation.order = 'YXZ';
@@ -908,6 +953,10 @@ export class GameEngine {
       aiReverse: false,
       aiSampleIdx: 0,
       aiCooldown: 0,
+      airTime: 0,
+      wasAirborne: false,
+      airStartX: x,
+      airStartZ: z,
     };
     this.vehicles.push(entity);
     return entity;
@@ -1150,24 +1199,32 @@ export class GameEngine {
       this.emitHud();
       return { ok: true, message: msg };
     }
+    if (code === '2532') {
+      this.clearWanted();
+      return { ok: true, message: 'CHEAT: Hľadanie PBPD zrušené!' };
+    }
+    if (code === '4325') {
+      this.healAndRepair();
+      return { ok: true, message: 'CHEAT: Zdravie, vesta & vozidlo opravené!' };
+    }
     if (code === '5342') {
-      this.spawnPlayerVehicle('helicopter');
+      this.spawnPlayerVehicle('helicopter', true);
       return { ok: true, message: 'CHEAT: SkyHawk Vrtuľník pristavený!' };
     }
     if (code === '7645') {
-      this.spawnPlayerVehicle('taxi');
+      this.spawnPlayerVehicle('taxi', true);
       return { ok: true, message: 'CHEAT: Sunstate Cab Taxi pristavený!' };
     }
     if (code === '7726') {
-      this.spawnPlayerVehicle('solstice');
+      this.spawnPlayerVehicle('solstice', true);
       return { ok: true, message: 'CHEAT: Solstice Superšport pristavený!' };
     }
     if (code === '8654') {
-      this.spawnPlayerVehicle('plane');
+      this.spawnPlayerVehicle('plane', true);
       return { ok: true, message: 'CHEAT: Coral Wing Lietadlo pristavené!' };
     }
     if (code === '9975') {
-      this.spawnPlayerVehicle('jet');
+      this.spawnPlayerVehicle('jet', true);
       return { ok: true, message: 'CHEAT: Valkyrie Ozbrojená stíhačka pristavená!' };
     }
     this.showToast(`Neznáme číslo: ${code}`, 'warning');
@@ -1185,10 +1242,12 @@ export class GameEngine {
     window.addEventListener('wheel', this.handleWheel, { passive: true });
     window.addEventListener('gamepadconnected', this.handleGamepadChange);
     window.addEventListener('gamepaddisconnected', this.handleGamepadChange);
+    window.addEventListener('blur', this.handleWindowBlur);
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener('mousedown', this.handleCanvasMouseDown);
+    canvas.addEventListener('contextmenu', this.handleContextMenu);
     canvas.addEventListener('webglcontextlost', this.handleContextLost);
   }
 
@@ -1205,8 +1264,6 @@ export class GameEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.composer?.setSize(width, height);
-    this.bloomPass?.resolution.set(width, height);
   };
 
   private handleContextLost = (e: Event) => {
@@ -1216,6 +1273,17 @@ export class GameEngine {
   private handlePointerLockChange = () => {
     this.pointerLocked = document.pointerLockElement === this.renderer.domElement;
     this.emitHud();
+  };
+
+  private handleContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+  };
+
+  private handleWindowBlur = () => {
+    this.mouseDown = false;
+    this.mouseAiming = false;
+    this.isDraggingLook = false;
+    this.keys = {};
   };
 
   private handleCanvasMouseDown = (e: MouseEvent) => {
@@ -1241,12 +1309,25 @@ export class GameEngine {
       } else if (this.currentVehicle) {
         this.tryFireVehicleAction();
       }
+    } else if (e.button === 2) {
+      e.preventDefault();
+      this.mouseAiming = true;
+      this.isDraggingLook = true;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
     }
   };
 
-  private handleMouseUp = () => {
-    this.mouseDown = false;
-    this.isDraggingLook = false;
+  private handleMouseUp = (e: MouseEvent) => {
+    if (e.button === 0) {
+      this.mouseDown = false;
+    } else if (e.button === 2) {
+      this.mouseAiming = false;
+    } else {
+      this.mouseDown = false;
+      this.mouseAiming = false;
+    }
+    this.isDraggingLook = this.mouseDown || this.mouseAiming;
   };
 
   private handleMouseMove = (e: MouseEvent) => {
@@ -1270,8 +1351,9 @@ export class GameEngine {
       return;
     }
 
-    this.camYaw -= dx * 0.0032;
-    this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0024, -0.35, 1.05);
+    const adsSens = this.isAiming && !this.currentVehicle ? 0.56 : 1.0;
+    this.camYaw -= dx * 0.0032 * adsSens;
+    this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0024 * adsSens, -0.58, 1.05);
     this.manualLookCooldown = 0.85;
   };
 
@@ -1304,6 +1386,7 @@ export class GameEngine {
       ...this.controlsConfig[ctx],
       [action]: { ...existing, ...patch },
     };
+    this.cachedControlsSnapshot = null;
     this.saveGameState(true);
     this.emitHud();
   }
@@ -1315,6 +1398,7 @@ export class GameEngine {
     } else {
       this.controlsConfig = def;
     }
+    this.cachedControlsSnapshot = null;
     this.saveGameState(true);
     this.showToast('Ovládanie obnovené na GTA V predvolené', 'info');
     this.emitHud();
@@ -1402,7 +1486,7 @@ export class GameEngine {
       }
     } else if (this.isActionTriggeredByKey(ctx, 'camera', code) || code === 'KeyV') {
       this.toggleCameraMode();
-    } else if (this.isActionTriggeredByKey(ctx, 'radio', code)) {
+    } else if (this.isActionTriggeredByKey(ctx, 'radio', code) || code === 'KeyR') {
       this.cycleRadioStation();
     } else if (
       (this.isActionTriggeredByKey(ctx, 'jump', code) || code === 'Space') &&
@@ -1514,10 +1598,11 @@ export class GameEngine {
       this.setWeapon(order[(idx + 1) % order.length]);
     }
 
-    // Right Stick Look
+    // Right Stick Look (finer precision when ADS aiming on foot)
     if (rx !== 0 || ry !== 0) {
-      this.camYaw -= rx * dt * 2.5;
-      this.camPitch = THREE.MathUtils.clamp(this.camPitch + ry * dt * 1.8, -0.35, 1.05);
+      const adsScale = this.isAiming && !this.currentVehicle ? 0.58 : 1.0;
+      this.camYaw -= rx * dt * 2.5 * adsScale;
+      this.camPitch = THREE.MathUtils.clamp(this.camPitch + ry * dt * 1.8 * adsScale, -0.58, 1.05);
       this.manualLookCooldown = 0.85;
     }
 
@@ -1580,43 +1665,43 @@ export class GameEngine {
     }
 
     if (action === 'repair') {
-      if (this.account.cash < 150) return this.showToast('Potrebuješ $150 na opravu', 'warning');
-      this.account.cash -= 150;
+      if (this.account.cash < 450) return this.showToast('Potrebuješ $450 na opravu', 'warning');
+      this.account.cash -= 450;
       veh.health = 100;
       veh.wrecked = false;
       veh.onFire = false;
       veh.waterDisabled = false;
       veh.rig.fireGroup.visible = false;
       resetVehicleDeformation(veh.rig);
-      this.showToast('Karoséria a motor kompletne opravené (-$150)', 'success');
+      this.showToast('Karoséria a motor kompletne opravené (-$450)', 'success');
     } else if (action === 'paint' && typeof value === 'number') {
-      if (this.account.cash < 200) return this.showToast('Potrebuješ $200 na nový lak', 'warning');
-      this.account.cash -= 200;
+      if (this.account.cash < 650) return this.showToast('Potrebuješ $650 na nový lak', 'warning');
+      this.account.cash -= 650;
       veh.rig.paintMat.color.setHex(value);
-      this.showToast('Metalický lak nanesený (-$200)', 'success');
+      this.showToast('Metalický lak nanesený (-$650)', 'success');
     } else if (action === 'engine') {
       if (veh.upgrades.engineLevel >= 3) return this.showToast('Motor už je na max úrovni!', 'info');
-      const cost = 600 + veh.upgrades.engineLevel * 350;
+      const cost = 2400 + veh.upgrades.engineLevel * 1400;
       if (this.account.cash < cost) return this.showToast(`Potrebuješ $${cost}`, 'warning');
       this.account.cash -= cost;
       veh.upgrades.engineLevel++;
       this.showToast(`Tuning motora Lv.${veh.upgrades.engineLevel} nainštalovaný!`, 'success');
     } else if (action === 'turbo') {
       if (veh.upgrades.turboInstalled) return this.showToast('Turbo už je namontované!', 'info');
-      if (this.account.cash < 950) return this.showToast('Potrebuješ $950 na Turbo kit', 'warning');
-      this.account.cash -= 950;
+      if (this.account.cash < 4500) return this.showToast('Potrebuješ $4,500 na Turbo kit', 'warning');
+      this.account.cash -= 4500;
       veh.upgrades.turboInstalled = true;
       this.showToast('Twin-Turbo Kit namontovaný!', 'success');
     } else if (action === 'handling') {
       if (veh.upgrades.handlingLevel >= 2) return this.showToast('Podvozok je na max!', 'info');
-      const cost = 450 + veh.upgrades.handlingLevel * 300;
+      const cost = 1800 + veh.upgrades.handlingLevel * 1200;
       if (this.account.cash < cost) return this.showToast(`Potrebuješ $${cost}`, 'warning');
       this.account.cash -= cost;
       veh.upgrades.handlingLevel++;
       this.showToast(`Športový podvozok Lv.${veh.upgrades.handlingLevel} nainštalovaný!`, 'success');
     } else if (action === 'neon' && typeof value === 'string') {
-      const cost = value === 'off' ? 0 : 350;
-      if (this.account.cash < cost) return this.showToast('Potrebuješ $350 na Neón kit', 'warning');
+      const cost = value === 'off' ? 0 : 1100;
+      if (this.account.cash < cost) return this.showToast('Potrebuješ $1,100 na Neón kit', 'warning');
       this.account.cash -= cost;
       veh.upgrades.neonColor = value;
       setVehicleNeon(veh.rig, value);
@@ -1627,7 +1712,7 @@ export class GameEngine {
   }
 
   public buyArmoryItem(item: 'pistol' | 'smg' | 'ammo_pistol' | 'ammo_smg' | 'armor' | 'parachute') {
-    const prices = { pistol: 300, smg: 750, ammo_pistol: 120, ammo_smg: 220, armor: 350, parachute: 250 };
+    const prices = { pistol: 1200, smg: 3400, ammo_pistol: 280, ammo_smg: 540, armor: 1150, parachute: 950 };
     const cost = prices[item];
     if (this.account.cash < cost) return this.showToast(`Potrebuješ $${cost}`, 'warning');
 
@@ -1636,31 +1721,31 @@ export class GameEngine {
       this.account.unlockedWeapons.pistol = true;
       this.account.ammo.pistol = WEAPONS.pistol.maxAmmo;
       this.setWeapon('pistol');
-      this.showToast('Kúpená pištoľ Viper 9mm (-$300)', 'success');
+      this.showToast('Kúpená pištoľ Viper 9mm (-$1,200)', 'success');
     } else if (item === 'smg') {
       this.account.cash -= cost;
       this.account.unlockedWeapons.smg = true;
       this.account.ammo.smg = WEAPONS.smg.maxAmmo;
       this.setWeapon('smg');
-      this.showToast('Kúpené Tide-9 SMG (-$750)', 'success');
+      this.showToast('Kúpené Tide-9 SMG (-$3,400)', 'success');
     } else if (item === 'ammo_pistol') {
       this.account.cash -= cost;
       this.account.ammo.pistol = WEAPONS.pistol.maxAmmo;
-      this.showToast('Náboje 9mm doplnené (-$120)', 'success');
+      this.showToast('Náboje 9mm doplnené (-$280)', 'success');
     } else if (item === 'ammo_smg') {
       if (!this.account.unlockedWeapons.smg) return this.showToast('Najprv si kúp Tide-9 SMG', 'warning');
       this.account.cash -= cost;
       this.account.ammo.smg = WEAPONS.smg.maxAmmo;
-      this.showToast('Náboje SMG doplnené (-$220)', 'success');
+      this.showToast('Náboje SMG doplnené (-$540)', 'success');
     } else if (item === 'armor') {
       this.account.cash -= cost;
       this.armor = 100;
-      this.showToast('Taktická nepriestrelná vesta nasadená (-$350)', 'success');
+      this.showToast('Taktická nepriestrelná vesta nasadená (-$1,150)', 'success');
     } else if (item === 'parachute') {
       this.account.cash -= cost;
       this.account.hasParachute = true;
       this.playerRig.parachutePack.visible = true;
-      this.showToast('Padák zakúpený! Pri páde stlač SPACE.', 'success');
+      this.showToast('Padák zakúpený! Pri páde stlač SPACE. (-$950)', 'success');
     }
     this.sound.playCashChime();
     this.emitHud();
@@ -1712,16 +1797,21 @@ export class GameEngine {
     const spec = VEHICLE_SPECS[type];
     if (purchase) {
       if (this.account.cash < spec.price) {
-        return this.showToast(`Potrebuješ $${spec.price} na kúpu ${spec.name}`, 'warning');
+        return this.showToast(`Potrebuješ $${spec.price.toLocaleString()} na kúpu ${spec.name}`, 'warning');
       }
       this.account.cash -= spec.price;
+      if (!this.account.ownedVehicles.includes(type)) {
+        this.account.ownedVehicles.push(type);
+      }
       this.sound.playCashChime();
+      this.saveGameState(true);
     }
-    this.spawnPlayerVehicle(type);
+    this.spawnPlayerVehicle(type, true);
     this.showToast(
-      purchase ? `Kúpené vozidlo ${spec.name} (-$${spec.price})` : `Testovacia jazda: ${spec.name}`,
+      purchase ? `Kúpené vozidlo ${spec.name} (-$${spec.price.toLocaleString()})` : `Testovacia jazda: ${spec.name}`,
       'success',
     );
+    this.emitHud();
   }
 
   public safehouseAction(action: 'rest' | 'save' | 'time', preset?: TimePreset) {
@@ -1777,12 +1867,19 @@ export class GameEngine {
     this.account.skills[skill] = Math.min(100, this.account.skills[skill] + amount);
   }
 
-  public spawnPlayerVehicle(type: VehicleTypeId) {
+  public spawnPlayerVehicle(type: VehicleTypeId, bypassOwnership = false) {
     this.sound.unlock();
+    const spec = VEHICLE_SPECS[type];
+    if (!bypassOwnership && !this.account.ownedVehicles.includes(type)) {
+      this.showToast(
+        `${spec.name} ešte nevlastníš! Kúp si ho v Sunstate Motors ($${spec.price.toLocaleString()}).`,
+        'warning',
+      );
+      return;
+    }
     const px = this.currentVehicle ? this.currentVehicle.x : this.playerX;
     const pz = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
     const yaw = this.currentVehicle ? this.currentVehicle.yaw : this.playerYaw;
-    const spec = VEHICLE_SPECS[type];
     const spot = this.findClearSpawnSpot(
       px + Math.sin(yaw + Math.PI * 0.5) * 6.5,
       pz + Math.cos(yaw + Math.PI * 0.5) * 6.5,
@@ -1913,13 +2010,101 @@ export class GameEngine {
   public startStoryMission(id: string, coopHostHandle?: string) {
     const def = STORY_MISSIONS.find((m) => m.id === id);
     if (!def) return;
+    if (!coopHostHandle && def.requiredCompleted && this.completedStoryIds.length < def.requiredCompleted) {
+      this.showToast(
+        `Zamknuté! Dokonči najprv ${def.requiredCompleted} príbehových misií.`,
+        'warning',
+      );
+      return;
+    }
     this.launchStoryMissionDef(def, coopHostHandle);
+  }
+
+  private spawnGslCourierVanOnRoad(targetX: number, targetZ: number): VehicleEntity {
+    // Remove leftover old mission vans if player restarted
+    for (let i = this.vehicles.length - 1; i >= 0; i--) {
+      if (this.vehicles[i].type === 'gsl_van' && this.vehicles[i] !== this.currentVehicle) {
+        this.scene.remove(this.vehicles[i].rig.group);
+        this.vehicles.splice(i, 1);
+      }
+    }
+
+    const px = this.currentVehicle ? this.currentVehicle.x : this.playerX;
+    const pz = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
+    let proj = projectPointOntoRoad(this.world.network, px, pz);
+    let edge = this.world.network.edges[proj.edgeId];
+
+    // Prefer nearest paved road if player started on a dirt track
+    if (!edge || edge.isDirt) {
+      let bestDistSq = Infinity;
+      for (const e of this.world.network.edges) {
+        if (e.isDirt) continue;
+        for (let i = 0; i < e.samples.length; i++) {
+          const s = e.samples[i];
+          const dSq = (s.x - px) ** 2 + (s.z - pz) ** 2;
+          if (dSq < bestDistSq) {
+            bestDistSq = dSq;
+            edge = e;
+            proj = {
+              edgeId: e.id,
+              segIdx: Math.min(e.samples.length - 2, i),
+              t: 0,
+              point: { x: s.x, z: s.z },
+              distFromFrom: 0,
+              distToTo: 0,
+              distSq: dSq,
+            };
+          }
+        }
+      }
+    }
+
+    const s0 = edge.samples[Math.max(0, Math.min(edge.samples.length - 2, proj.segIdx))];
+    const s1 = edge.samples[Math.max(1, Math.min(edge.samples.length - 1, proj.segIdx + 1))];
+    let dx = s1.x - s0.x;
+    let dz = s1.z - s0.z;
+    if ((targetX - proj.point.x) * dx + (targetZ - proj.point.z) * dz < 0) {
+      dx = -dx;
+      dz = -dz;
+    }
+    const len = Math.hypot(dx, dz) || 1;
+    const tx = dx / len;
+    const tz = dz / len;
+    const rx = -tz;
+    const rz = tx;
+    const laneOffset = edge.width * 0.22;
+    const spawnX = proj.point.x + rx * laneOffset;
+    const spawnZ = proj.point.z + rz * laneOffset;
+    const yaw = Math.atan2(tx, tz);
+
+    const van = this.createVehicle('gsl_van', spawnX, spawnZ, yaw, false, 0xf8fafc);
+    this.currentVehicle = van;
+    this.parachuteOpen = false;
+    this.playerRig.parachuteCanopy.visible = false;
+    this.playerRig.group.visible = false;
+    this.camYaw = yaw + Math.PI;
+    this.currentGear = 1;
+    this.engineRpm = 0.22;
+    this.shiftDipTimer = 0;
+    this.prevVehSpeed = 0;
+    this.prevVehYaw = yaw;
+    return van;
+  }
+
+  private failGslMission(reason: string) {
+    if (!this.gslState.active) return;
+    this.gslState = { active: false, vanId: null, packageDamage: 0, onRoad: true, graceTimer: 0 };
+    this.sound.playPhoneBeep(280);
+    this.clearGpsWaypoint();
+    this.cancelMission();
+    this.showToast(`Misia GSL nesplnená: ${reason} Začni odznova.`, 'warning');
   }
 
   public launchStoryMissionDef(def: StoryMissionDef, coopHostHandle?: string) {
     const firstStage = def.stages[0];
     const beginGameplay = () => {
       this.activeStoryDef = def;
+      this.gslState = { active: false, vanId: null, packageDamage: 0, onRoad: true, graceTimer: 0 };
       this.mission = {
         activeId: def.id,
         isHidden: false,
@@ -1934,10 +2119,26 @@ export class GameEngine {
         reward: def.reward,
         coopHostHandle,
       };
+      const isGsl = Boolean(def.isGslCourier || def.id === 'm21');
+      if (isGsl) {
+        const van = this.spawnGslCourierVanOnRoad(firstStage.targetX, firstStage.targetZ);
+        this.gslState = {
+          active: true,
+          vanId: van.id,
+          packageDamage: 0,
+          onRoad: true,
+          graceTimer: 1.8,
+        };
+      }
       if (def.wantedOnStart) this.addWanted(def.wantedOnStart - this.wantedStars);
       this.recordWorldEvent(`Spustená misia: ${def.title}`);
       this.setGpsWaypoint(firstStage.targetX, firstStage.targetZ, def.title);
-      this.showToast(`Misia spustená: ${def.title}`, 'info');
+      this.showToast(
+        isGsl
+          ? 'Dodávka GSL pristavená! Choď len po ceste, 0% poškodenia auta a max 5% balíka.'
+          : `Misia spustená: ${def.title}`,
+        'info',
+      );
       this.emitHud();
     };
 
@@ -2015,6 +2216,7 @@ export class GameEngine {
   public cancelMission() {
     this.activeStoryDef = null;
     this.activeHiddenId = null;
+    this.gslState = { active: false, vanId: null, packageDamage: 0, onRoad: true, graceTimer: 0 };
     this.mission = {
       activeId: null,
       isHidden: false,
@@ -2208,6 +2410,11 @@ export class GameEngine {
         bestVeh.isServiceUnit = undefined;
       }
       this.currentVehicle = bestVeh;
+      this.currentGear = 1;
+      this.engineRpm = 0.22;
+      this.shiftDipTimer = 0;
+      this.prevVehSpeed = Math.hypot(bestVeh.vx, bestVeh.vz);
+      this.prevVehYaw = bestVeh.yaw;
       this.parachuteOpen = false;
       this.playerRig.parachuteCanopy.visible = false;
       this.playerRig.group.visible = false;
@@ -2288,6 +2495,73 @@ export class GameEngine {
     }
   }
 
+  private computeCrosshairAimTarget(maxRange: number): {
+    point: THREE.Vector3;
+    targetType: 'none' | 'npc' | 'vehicle' | 'range';
+  } {
+    this.camera.updateMatrixWorld();
+    this.camera.getWorldPosition(_aimCamOrigin);
+    this.camera.getWorldDirection(_aimCamDir);
+
+    const toPlayerProj =
+      (this.playerX - _aimCamOrigin.x) * _aimCamDir.x +
+      (this.playerY + 1.45 - _aimCamOrigin.y) * _aimCamDir.y +
+      (this.playerZ - _aimCamOrigin.z) * _aimCamDir.z;
+    const minT = this.cameraMode === 'third' ? Math.max(0.45, toPlayerProj + 0.18) : 0.35;
+    _aimRayOrigin.copy(_aimCamOrigin).addScaledVector(_aimCamDir, minT);
+
+    let bestDist = this.raycastWorldColliders(_aimRayOrigin, _aimCamDir, maxRange);
+    let targetType: 'none' | 'npc' | 'vehicle' | 'range' = 'none';
+
+    for (const rt of this.world.rangeTargets) {
+      const rx = rt.baseX + Math.sin(this.elapsed * 1.4 + rt.phase) * 0.75;
+      const toX = rx - _aimRayOrigin.x;
+      const toY = rt.baseY - _aimRayOrigin.y;
+      const toZ = rt.baseZ - _aimRayOrigin.z;
+      const proj = toX * _aimCamDir.x + toY * _aimCamDir.y + toZ * _aimCamDir.z;
+      if (proj > 0 && proj < bestDist) {
+        const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
+        if (perpSq < 0.92 * 0.92) {
+          bestDist = proj;
+          targetType = 'range';
+        }
+      }
+    }
+
+    for (const npc of this.npcs) {
+      if (npc.dead) continue;
+      const toX = npc.x - _aimRayOrigin.x;
+      const toY = npc.y + 1.05 - _aimRayOrigin.y;
+      const toZ = npc.z - _aimRayOrigin.z;
+      const proj = toX * _aimCamDir.x + toY * _aimCamDir.y + toZ * _aimCamDir.z;
+      if (proj > 0 && proj < bestDist) {
+        const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
+        if (perpSq < 0.82 * 0.82) {
+          bestDist = proj;
+          targetType = 'npc';
+        }
+      }
+    }
+
+    for (const v of this.vehicles) {
+      if (v === this.currentVehicle) continue;
+      const toX = v.x - _aimRayOrigin.x;
+      const toY = v.y + 0.9 - _aimRayOrigin.y;
+      const toZ = v.z - _aimRayOrigin.z;
+      const proj = toX * _aimCamDir.x + toY * _aimCamDir.y + toZ * _aimCamDir.z;
+      if (proj > 0 && proj < bestDist) {
+        const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
+        if (perpSq < 1.85 * 1.85) {
+          bestDist = proj;
+          targetType = 'vehicle';
+        }
+      }
+    }
+
+    _aimTargetPt.copy(_aimRayOrigin).addScaledVector(_aimCamDir, bestDist);
+    return { point: _aimTargetPt, targetType };
+  }
+
   private tryFireWeapon() {
     if (this.fireCooldown > 0) return;
     const spec = WEAPONS[this.weaponId];
@@ -2315,31 +2589,48 @@ export class GameEngine {
       }
     }
 
+    const sinY = Math.sin(this.playerYaw);
+    const cosY = Math.cos(this.playerYaw);
+    const origin = _v1;
+    const dir = _v2;
+
     if (this.weaponId !== 'fists') {
+      origin.set(
+        this.playerX - 0.26 * cosY + 0.55 * sinY,
+        this.playerY + 1.45 - Math.sin(this.camPitch) * 0.22,
+        this.playerZ + 0.26 * sinY + 0.55 * cosY,
+      );
       this.muzzleTimer = 0.06;
-      this.muzzleLight.position.set(this.playerX, this.playerY + 1.5, this.playerZ);
+      this.muzzleLight.position.copy(origin);
       this.muzzleLight.intensity = 4.5;
       this.manualLookCooldown = 0.55;
-      this.playerYaw = this.camYaw + Math.PI;
-      this.playerRig.group.rotation.y = this.playerYaw;
       this.recordWorldEvent(`Streľba zo zbrane (${spec.name})`);
+
+      const aimTarget = this.computeCrosshairAimTarget(spec.range);
+      dir.copy(aimTarget.point).sub(origin);
+      if (dir.lengthSq() < 0.0001) {
+        dir.set(sinY, -Math.sin(this.camPitch), cosY);
+      }
+      dir.normalize();
+
+      // Skill & ADS-adjusted weapon spread
+      const skillTighten = 1 - (this.account.skills.shooting / 100) * 0.55;
+      const adsTighten = this.isAiming ? 0.22 : 0.78;
+      const spread = spec.spread * skillTighten * adsTighten;
+      if (spread > 0) {
+        dir.x += (Math.random() - 0.5) * spread;
+        dir.y += (Math.random() - 0.5) * spread;
+        dir.z += (Math.random() - 0.5) * spread;
+        dir.normalize();
+      }
+    } else {
+      origin.set(this.playerX, this.playerY + 1.3, this.playerZ);
+      dir.set(sinY, -Math.sin(this.camPitch) * 0.35, cosY).normalize();
     }
-
-    // Skill-adjusted weapon spread
-    const skillTighten = 1 - (this.account.skills.shooting / 100) * 0.55;
-    const spread = spec.spread * skillTighten;
-
-    const origin = _v1.set(this.playerX, this.playerY + 1.45, this.playerZ);
-    const dir = _v2
-      .set(
-        Math.sin(this.playerYaw) + (Math.random() - 0.5) * spread,
-        -this.camPitch * 0.65 + (Math.random() - 0.5) * spread,
-        Math.cos(this.playerYaw) + (Math.random() - 0.5) * spread,
-      )
-      .normalize();
 
     // Solid world wall/furniture occlusion! Bullets stop at the first solid obstacle.
     let bestDist = this.raycastWorldColliders(origin, dir, spec.range);
+    let hitRangeTarget: (typeof this.world.rangeTargets)[number] | null = null;
     let hitNpc: NpcEntity | null = null;
     let hitVehicle: VehicleEntity | null = null;
 
@@ -2353,14 +2644,9 @@ export class GameEngine {
         const proj = toX * dir.x + toY * dir.y + toZ * dir.z;
         if (proj > 0 && proj < bestDist) {
           const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
-          if (perpSq < 0.9 * 0.9) {
-            rt.hitFlash = 0.35;
-            this.gainSkill('shooting', 1.2);
-            this.account.cash += 25;
-            this.sound.playCashChime();
-            this.showToast('Zásah na strelnici! +$25 & +Streľba', 'success');
-            this.spawnSparks(rx, rt.baseY, rt.baseZ, 0xfacc15, 6);
-            break;
+          if (perpSq < 0.92 * 0.92) {
+            bestDist = proj;
+            hitRangeTarget = rt;
           }
         }
       }
@@ -2369,15 +2655,16 @@ export class GameEngine {
     for (const npc of this.npcs) {
       if (npc.dead) continue;
       const toX = npc.x - origin.x;
-      const toY = npc.y + 1.0 - origin.y;
+      const toY = npc.y + 1.05 - origin.y;
       const toZ = npc.z - origin.z;
       const proj = toX * dir.x + toY * dir.y + toZ * dir.z;
       if (proj > 0 && proj < bestDist) {
         const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
-        if (perpSq < 0.78 * 0.78) {
+        if (perpSq < 0.82 * 0.82) {
           bestDist = proj;
           hitNpc = npc;
           hitVehicle = null;
+          hitRangeTarget = null;
         }
       }
     }
@@ -2390,10 +2677,11 @@ export class GameEngine {
       const proj = toX * dir.x + toY * dir.y + toZ * dir.z;
       if (proj > 0 && proj < bestDist) {
         const perpSq = toX * toX + toY * toY + toZ * toZ - proj * proj;
-        if (perpSq < 1.8 * 1.8) {
+        if (perpSq < 1.85 * 1.85) {
           bestDist = proj;
           hitVehicle = v;
           hitNpc = null;
+          hitRangeTarget = null;
         }
       }
     }
@@ -2401,7 +2689,7 @@ export class GameEngine {
     const endPoint = origin.clone().addScaledVector(dir, bestDist);
     if (this.weaponId !== 'fists') {
       const tracerGeo = new THREE.BufferGeometry().setFromPoints([
-        origin.clone().addScaledVector(dir, 0.7),
+        origin.clone().addScaledVector(dir, 0.25),
         endPoint,
       ]);
       const tracer = new THREE.Line(
@@ -2412,7 +2700,16 @@ export class GameEngine {
       this.tracers.push({ line: tracer, life: 0.07 });
     }
 
-    if (hitNpc) {
+    if (hitRangeTarget) {
+      hitRangeTarget.hitFlash = 0.35;
+      this.hitMarkerTimer = 0.18;
+      this.gainSkill('shooting', 1.2);
+      this.account.cash += 10;
+      this.sound.playCashChime();
+      this.showToast('Zásah na strelnici! +$10 & +Streľba', 'success');
+      this.spawnSparks(endPoint.x, endPoint.y, endPoint.z, 0xfacc15, 6);
+    } else if (hitNpc) {
+      this.hitMarkerTimer = 0.18;
       hitNpc.health -= spec.damage;
       this.gainSkill('shooting', 0.5);
       this.spawnSparks(hitNpc.x, hitNpc.y + 1.1, hitNpc.z, 0xef4444, 6);
@@ -2421,18 +2718,26 @@ export class GameEngine {
         hitNpc.dead = true;
         hitNpc.respawnTimer = 18;
         hitNpc.rig.group.rotation.x = Math.PI / 2;
-        this.account.cash += hitNpc.isCop ? 150 : 85;
+        this.account.cash += hitNpc.isCop ? 25 : 15;
       }
     } else if (hitVehicle) {
+      this.hitMarkerTimer = 0.18;
       this.damageVehicle(hitVehicle, spec.damage * 0.55, dir.x, dir.z);
       this.gainSkill('shooting', 0.35);
       this.spawnSparks(endPoint.x, endPoint.y, endPoint.z, 0xfbbf24, 6);
       if (hitVehicle.isPolice) this.addWanted(1);
+    } else if (this.weaponId !== 'fists' && bestDist < spec.range) {
+      this.spawnSparks(endPoint.x, endPoint.y, endPoint.z, 0xfde68a, 3);
     }
   }
 
   private damageVehicle(v: VehicleEntity, amount: number, impactDirX = 0, impactDirZ = 1) {
     if (v.wrecked) return;
+    if (this.gslState.active && v.id === this.gslState.vanId && amount > 0) {
+      v.health = Math.max(0, v.health - amount);
+      this.failGslMission('Dodávka GSL utrpela poškodenie! Auto musí mať 0% poškodenia.');
+      return;
+    }
     if (v === this.currentVehicle && this.godMode) return;
     v.health = Math.max(0, v.health - amount);
 
@@ -2503,6 +2808,25 @@ export class GameEngine {
       this.currentFps = Math.round(this.fpsFrames / this.fpsAccum);
       this.fpsAccum = 0;
       this.fpsFrames = 0;
+
+      // Non-destructive adaptive pixelRatio & shadow cadence protection on weak GPUs
+      if (!this.isSoftwareGl && !this.startupMode) {
+        if (this.currentFps < 28) {
+          this.lowFpsStreak++;
+          if (this.lowFpsStreak >= 2) {
+            this.lowFpsStreak = 0;
+            if (this.adaptiveDprCap > 0.85) {
+              this.adaptiveDprCap = this.adaptiveDprCap > 1.0 ? 1.0 : 0.85;
+              this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.adaptiveDprCap));
+            }
+            if (this.shadowUpdateInterval < 4) {
+              this.shadowUpdateInterval++;
+            }
+          }
+        } else {
+          this.lowFpsStreak = 0;
+        }
+      }
     }
 
     const gp = this.pollGamepad(dt);
@@ -2534,6 +2858,7 @@ export class GameEngine {
       }
 
       if (this.fireCooldown > 0) this.fireCooldown -= dt;
+      if (this.hitMarkerTimer > 0) this.hitMarkerTimer = Math.max(0, this.hitMarkerTimer - dt);
       if (this.manualLookCooldown > 0) this.manualLookCooldown = Math.max(0, this.manualLookCooldown - dt);
       if (this.weaponRecoil > 0) this.weaponRecoil = Math.max(0, this.weaponRecoil - dt * 5.5);
       if (this.muzzleTimer > 0) {
@@ -2543,6 +2868,11 @@ export class GameEngine {
 
       // Hold to spray Fire Truck water or fire SMG / Jet weapons
       const ctxNow = this.getActiveControlContext();
+      this.isAiming =
+        !this.currentVehicle &&
+        !this.wasted &&
+        (this.mouseAiming || this.isActionHeld('on_foot', 'aim', gp.pad) > 0.35);
+
       if (
         (this.mouseDown || this.isActionHeld(ctxNow, 'fire', gp.pad) > 0.35 || gp.fire) &&
         !this.wasted
@@ -2554,9 +2884,9 @@ export class GameEngine {
         }
       }
 
-      // 3x Real-Time Continuous Day/Night Cycle (1 real sec = 3 game secs)
+      // Continuous Day/Night Cycle (1 real sec = 1 in-game minute, 24 min full day)
       if (this.autoTimeCycle) {
-        this.timeHour = (this.timeHour + dt * (3 / 3600)) % 24;
+        this.timeHour = (this.timeHour + dt / 60) % 24;
       }
       this.updateAtmosphereAndClouds(dt);
 
@@ -2609,14 +2939,14 @@ export class GameEngine {
           this.wasted = false;
           this.health = 100;
           this.armor = 25;
-          this.account.cash = Math.max(0, this.account.cash - 150);
+          this.account.cash = Math.max(0, this.account.cash - 350);
           this.wantedStars = 0;
           const hosp = this.findClearSpawnSpot(-366, -646, 0.7);
           this.playerX = hosp.x;
           this.playerZ = hosp.z;
           this.playerY = this.world.groundHeightAt(this.playerX, this.playerZ, 2);
           this.playerRig.group.position.set(this.playerX, this.playerY, this.playerZ);
-          this.showToast('Prepustený z nemocnice Palmetto General (-$150)', 'info');
+          this.showToast('Prepustený z nemocnice Palmetto General (-$350)', 'info');
         }
       } else if (this.currentVehicle) {
         this.updatePlayerVehicleControl(dt, gp);
@@ -2655,7 +2985,7 @@ export class GameEngine {
         );
       }
 
-      // Engine Audio
+      // Engine & Shifting Audio
       const speedMag = this.currentVehicle
         ? Math.hypot(this.currentVehicle.vx, this.currentVehicle.vz)
         : 0;
@@ -2679,8 +3009,18 @@ export class GameEngine {
           }
         }
       }
-      const sirenStrength = this.wantedStars > 0 ? Math.max(0.1, 1 - nearestCopDist / 110) : 0;
-      this.sound.updateVehicleAudio(Boolean(this.currentVehicle), speedNorm, drifting, sirenStrength, this.elapsed);
+      const sirenStrength =
+        this.wantedStars > 0 && nearestCopDist < 95 ? Math.max(0, 1 - nearestCopDist / 95) : 0;
+      this.sound.updateVehicleAudio(
+        Boolean(this.currentVehicle),
+        speedNorm,
+        this.currentGear,
+        this.engineRpm,
+        this.lastThrottle,
+        drifting,
+        sirenStrength,
+        this.elapsed,
+      );
 
       this.hudTimer += dt;
       if (this.hudTimer >= 0.1) {
@@ -2694,11 +3034,14 @@ export class GameEngine {
   };
 
   private renderScene() {
-    if (this.composer && this.quality === 'high' && !this.isSoftwareGl) {
-      this.composer.render();
-    } else {
-      this.renderer.render(this.scene, this.camera);
+    if (this.renderer.shadowMap.enabled) {
+      this.shadowFrame++;
+      if (this.shadowFrame >= this.shadowUpdateInterval) {
+        this.shadowFrame = 0;
+        this.renderer.shadowMap.needsUpdate = true;
+      }
     }
+    this.renderer.render(this.scene, this.camera);
   }
 
   private updateStartupCamera(dt: number) {
@@ -2774,17 +3117,24 @@ export class GameEngine {
 
     this.applyAtmosphere();
 
-    // Update cloud opacity & darkness smoothly
+    // Update instanced clouds opacity, color & wind drift smoothly (1 draw call!)
     const cloudBrightness = 1 - this.cloudFactor * 0.45 - this.stormFactor * 0.22;
     this.world.cloudMats.forEach((m) => {
       m.opacity = THREE.MathUtils.clamp(this.cloudFactor * 0.82, 0.04, 0.88);
       m.color.setRGB(0.88 * cloudBrightness, 0.91 * cloudBrightness, 0.96 * cloudBrightness);
     });
     const windSpeed = 4.5 + this.stormFactor * 10;
-    this.world.cloudGroup.children.forEach((c) => {
-      c.position.x += dt * windSpeed;
-      if (c.position.x > 2400) c.position.x = -2400;
-    });
+    const puffs = this.world.cloudPuffs;
+    for (let i = 0; i < puffs.length; i++) {
+      const p = puffs[i];
+      p.x += dt * windSpeed;
+      if (p.x > 2400) p.x = -2400;
+      _cloudDummy.position.set(p.x, p.y, p.z);
+      _cloudDummy.scale.set(p.sx, p.sy, p.sz);
+      _cloudDummy.updateMatrix();
+      this.world.cloudInst.setMatrixAt(i, _cloudDummy.matrix);
+    }
+    this.world.cloudInst.instanceMatrix.needsUpdate = true;
 
     // Update road wetness sheen subtly
     this.world.roadMat.roughness = THREE.MathUtils.lerp(0.92, 0.38, this.wetness);
@@ -2837,9 +3187,9 @@ export class GameEngine {
     if (this.keys['ArrowRight']) r = Math.max(r, 1);
     if (this.keys['ArrowLeft']) r = Math.min(r, -1);
 
-    const sprinting = this.isActionHeld('on_foot', 'sprint', pad) > 0.35;
+    const sprinting = !this.isAiming && this.isActionHeld('on_foot', 'sprint', pad) > 0.35;
     const staminaMult = 1 + (this.account.skills.stamina / 100) * 0.28;
-    const speed = (sprinting ? 10.8 : 6.4) * staminaMult;
+    const speed = (this.isAiming ? 4.3 : sprinting ? 10.8 : 6.4) * staminaMult;
     const moveLen = Math.hypot(f, r);
 
     if (moveLen > 0.08) {
@@ -2851,15 +3201,15 @@ export class GameEngine {
       const moveX = -sinY * nf + cosY * nr;
       const moveZ = -cosY * nf - sinY * nr;
 
-      const targetYaw = Math.atan2(moveX, moveZ);
+      const targetYaw = this.isAiming ? this.camYaw + Math.PI : Math.atan2(moveX, moveZ);
       let diff = targetYaw - this.playerYaw;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.playerYaw += diff * Math.min(1, dt * 13);
+      this.playerYaw += diff * Math.min(1, dt * (this.isAiming ? 18 : 13));
 
-      // Camera follows character smoothly when turning or moving (unless actively looking around)
+      // Camera follows character smoothly when turning or moving (unless aiming or actively looking around)
       const steppingStraightBack = nf < -0.35 && Math.abs(nr) < 0.15;
-      if (!this.isDraggingLook && this.manualLookCooldown <= 0 && !steppingStraightBack) {
+      if (!this.isAiming && !this.isDraggingLook && this.manualLookCooldown <= 0 && !steppingStraightBack) {
         const desiredCamYaw = this.playerYaw + Math.PI;
         let camDiff = desiredCamYaw - this.camYaw;
         while (camDiff > Math.PI) camDiff -= Math.PI * 2;
@@ -2883,17 +3233,35 @@ export class GameEngine {
         this.playerZ = finalRes.z;
       }
 
-      this.walkCycle += dt * (sprinting ? 13 : 8);
-      const swing = Math.sin(this.walkCycle) * 0.62;
+      this.walkCycle += dt * (sprinting ? 13 : this.isAiming ? 6 : 8);
+      const newSin = Math.sin(this.walkCycle);
+      if (
+        this.onGround &&
+        !this.world.isWaterAt(this.playerX, this.playerZ) &&
+        ((this.prevWalkSin <= 0 && newSin > 0) || (this.prevWalkSin >= 0 && newSin < 0))
+      ) {
+        const isSoftGround = this.playerX < -1020 || this.playerX > 760;
+        this.sound.playFootstep(sprinting, isSoftGround);
+      }
+      this.prevWalkSin = newSin;
+      const swing = newSin * (this.isAiming ? 0.36 : 0.62);
       this.playerRig.leftLeg.rotation.x = swing;
       this.playerRig.rightLeg.rotation.x = -swing;
     } else {
+      if (this.isAiming) {
+        const aimYaw = this.camYaw + Math.PI;
+        let diff = aimYaw - this.playerYaw;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        this.playerYaw += diff * Math.min(1, dt * 18);
+      }
       const idleVehPush = this.resolveActorVsVehicles(this.playerX, this.playerZ, 0.26, this.playerY);
       const idleWorld = this.resolveWorldCollision(idleVehPush.x, idleVehPush.z, 0.26, this.playerY);
       this.playerX = idleWorld.x;
       this.playerZ = idleWorld.z;
       this.playerRig.leftLeg.rotation.x *= 0.85;
       this.playerRig.rightLeg.rotation.x *= 0.85;
+      this.prevWalkSin = 0;
     }
 
     // Solid player vs alive NPC separation
@@ -2914,13 +3282,15 @@ export class GameEngine {
       }
     }
 
-    // Articulated 2-Segment Arm & Weapon Pose + Recoil!
+    // Articulated 2-Segment Arm & Weapon Pose + Recoil + Aim Pitch!
     setCharacterWeaponPose(
       this.playerRig,
       this.weaponId,
       moveLen > 0.08,
       this.walkCycle,
       this.weaponRecoil,
+      this.camPitch * 0.85,
+      this.isAiming,
     );
 
     if (this.isActionHeld('on_foot', 'jump', pad) > 0.5 && this.onGround) {
@@ -3077,17 +3447,54 @@ export class GameEngine {
       let forwardSpeed = v.vx * fx + v.vz * fz;
       let lateralSpeed = v.vx * rx + v.vz * rz;
 
+      // Progressive type-dependent acceleration curve + natural drag + 6-speed shifting simulation
+      const speedRatio = THREE.MathUtils.clamp(Math.abs(forwardSpeed) / maxSpeed, 0, 1);
+      const torqueCurve = 1.18 - 0.76 * Math.pow(speedRatio, 1.05);
+      this.lastThrottle = throttle;
+
       if (throttle > 0) {
-        forwardSpeed += accel * throttle * dt;
+        forwardSpeed += accel * torqueCurve * throttle * dt;
         if (Math.abs(forwardSpeed) > 15) this.gainSkill('driving', dt * 0.45);
       }
       if (brake > 0) {
         if (forwardSpeed > 1) forwardSpeed -= spec.braking * brake * dt;
         else forwardSpeed -= accel * 0.55 * brake * dt;
       }
-      if (throttle === 0 && brake === 0) forwardSpeed *= Math.pow(0.45, dt);
+
+      // Rolling & aerodynamic drag
+      const coastDrag = throttle === 0 && brake === 0 ? 1.85 : 0.45;
+      forwardSpeed -= Math.sign(forwardSpeed) * (coastDrag * 0.35 + speedRatio * 2.15) * dt;
+      if (throttle === 0 && brake === 0 && Math.abs(forwardSpeed) < 0.08) forwardSpeed = 0;
 
       forwardSpeed = THREE.MathUtils.clamp(forwardSpeed, -maxSpeed * 0.42, maxSpeed);
+
+      // Simulate 6-speed automatic gearbox for dynamic engine pitch!
+      if (this.shiftDipTimer > 0) this.shiftDipTimer = Math.max(0, this.shiftDipTimer - dt);
+      const gearUpper = [0, 0.17, 0.34, 0.52, 0.7, 0.86, 1.02];
+      if (forwardSpeed >= -0.5) {
+        while (this.currentGear < 6 && speedRatio > gearUpper[this.currentGear]) {
+          this.currentGear++;
+          this.shiftDipTimer = 0.14;
+        }
+        while (this.currentGear > 1 && speedRatio < gearUpper[this.currentGear - 1] - 0.055) {
+          this.currentGear--;
+        }
+        const gMin = this.currentGear === 1 ? 0 : gearUpper[this.currentGear - 1] - 0.06;
+        const gMax = gearUpper[this.currentGear];
+        const inGearFrac = THREE.MathUtils.clamp(
+          (speedRatio - gMin) / Math.max(0.08, gMax - gMin),
+          0,
+          1,
+        );
+        let targetRpm = 0.24 + inGearFrac * 0.74;
+        if (this.shiftDipTimer > 0) targetRpm *= 0.66;
+        if (speedRatio >= 0.985 && this.currentGear === 6) targetRpm = 0.94;
+        this.engineRpm = THREE.MathUtils.damp(this.engineRpm, targetRpm, 9.5, dt);
+      } else {
+        this.currentGear = 1;
+        const revFrac = Math.min(1, Math.abs(forwardSpeed) / (maxSpeed * 0.36));
+        this.engineRpm = THREE.MathUtils.damp(this.engineRpm, 0.25 + revFrac * 0.62, 9, dt);
+      }
 
       const handbrake = this.isActionHeld(ctx, 'handbrake', pad) > 0.35;
       const wetGripMult = 1 - this.wetness * 0.2;
@@ -3117,9 +3524,14 @@ export class GameEngine {
   }
 
   private updateVehicles(dt: number) {
+    const px = this.currentVehicle ? this.currentVehicle.x : this.playerX;
+    const pz = this.currentVehicle ? this.currentVehicle.z : this.playerZ;
+
     for (let i = 0; i < this.vehicles.length; i++) {
       const v = this.vehicles[i];
       const spec = VEHICLE_SPECS[v.type];
+      const distSqPlayer = (v.x - px) ** 2 + (v.z - pz) ** 2;
+      const isFarAI = v.isAI && distSqPlayer > 250 * 250;
 
       if (v.onFire && !v.wrecked) {
         v.health -= dt * 3.5;
@@ -3143,31 +3555,37 @@ export class GameEngine {
         }
       }
 
-      // Sub-stepped 3-sphere vehicle capsule collision against solid buildings, pillars, trees & walls
+      // Sub-stepped 3-sphere vehicle capsule collision (culled for distant off-screen AI traffic)
       const moveX = v.vx * dt;
       const moveZ = v.vz * dt;
-      const moveDist = Math.hypot(moveX, moveZ);
-      const subSteps = Math.max(1, Math.min(8, Math.ceil(moveDist / 0.72)));
       let anyHit = false;
       let hitNx = 0;
       let hitNz = 0;
 
-      for (let s = 0; s < subSteps; s++) {
-        v.x = THREE.MathUtils.clamp(v.x + moveX / subSteps, -2450, 1650);
-        v.z = THREE.MathUtils.clamp(v.z + moveZ / subSteps, -2150, 2150);
-        const res = this.resolveVehicleWorldCollision(v);
-        if (res.hit) {
-          anyHit = true;
-          hitNx = res.nx;
-          hitNz = res.nz;
+      if (isFarAI) {
+        v.x = THREE.MathUtils.clamp(v.x + moveX, -2450, 1650);
+        v.z = THREE.MathUtils.clamp(v.z + moveZ, -2150, 2150);
+      } else {
+        const moveDist = Math.hypot(moveX, moveZ);
+        const subSteps = Math.max(1, Math.min(8, Math.ceil(moveDist / 0.72)));
+        for (let s = 0; s < subSteps; s++) {
+          v.x = THREE.MathUtils.clamp(v.x + moveX / subSteps, -2450, 1650);
+          v.z = THREE.MathUtils.clamp(v.z + moveZ / subSteps, -2150, 2150);
+          const res = this.resolveVehicleWorldCollision(v);
+          if (res.hit) {
+            anyHit = true;
+            hitNx = res.nx;
+            hitNz = res.nz;
+          }
         }
       }
 
       if (anyHit) {
         const vn = v.vx * hitNx + v.vz * hitNz;
         const impactSpeed = Math.abs(vn);
-        if (impactSpeed > 6.5) {
-          this.damageVehicle(v, impactSpeed * 1.15, v.vx, v.vz);
+        const isGslVan = this.gslState.active && v.id === this.gslState.vanId;
+        if (impactSpeed > (isGslVan ? 1.4 : 6.5)) {
+          this.damageVehicle(v, Math.max(isGslVan ? 1.5 : 0, impactSpeed * 1.15), v.vx, v.vz);
           if (v === this.currentVehicle) {
             this.sound.playCrash(impactSpeed / 32);
             this.recordWorldEvent(`Náraz vozidla ${spec.name}`);
@@ -3193,13 +3611,35 @@ export class GameEngine {
 
       v.y += v.vy * dt;
       const groundY = this.world.groundHeightAt(v.x, v.z, v.y);
+      if (v === this.currentVehicle && spec.kind === 'car') {
+        if (v.y > groundY + 0.55) {
+          v.airTime += dt;
+          if (!v.wasAirborne && v.airTime > 0.12) {
+            v.wasAirborne = true;
+            v.airStartX = v.x;
+            v.airStartZ = v.z;
+          }
+        }
+      }
       if (v.y <= groundY) {
         if (spec.kind !== 'car' && v.vy < -16) {
           this.damageVehicle(v, Math.abs(v.vy) * 2.2, 0, -1);
         }
+        if (v === this.currentVehicle && spec.kind === 'car' && v.wasAirborne && v.airTime >= 0.85 && !v.wrecked) {
+          const airDist = Math.hypot(v.x - v.airStartX, v.z - v.airStartZ);
+          if (airDist >= 11) {
+            const bonus = Math.min(25, Math.max(8, Math.round(airDist * 0.45 + v.airTime * 4)));
+            this.account.cash += bonus;
+            this.gainReputation(5);
+            this.sound.playCashChime();
+            this.showToast(`Kaskadérsky skok (${Math.round(airDist)}m)! +$${bonus}`, 'success');
+          }
+        }
+        v.airTime = 0;
+        v.wasAirborne = false;
         v.y = groundY;
         v.vy = 0;
-        if (spec.kind === 'car') {
+        if (spec.kind === 'car' && !isFarAI) {
           const fwdPitch =
             (this.world.groundHeightAt(v.x + Math.sin(v.yaw) * 2, v.z + Math.cos(v.yaw) * 2, v.y + 1) -
               groundY) *
@@ -3273,8 +3713,11 @@ export class GameEngine {
             a.vz -= nz * imp;
             b.vx += nx * imp;
             b.vz += nz * imp;
-            if (relSpeed > 9) {
-              const dmg = relSpeed * 1.1;
+            const gslInvolved =
+              this.gslState.active &&
+              (a.id === this.gslState.vanId || b.id === this.gslState.vanId);
+            if (relSpeed > (gslInvolved ? 1.2 : 9)) {
+              const dmg = Math.max(gslInvolved ? 1.5 : 0, relSpeed * 1.1);
               this.damageVehicle(a, dmg, nx, nz);
               this.damageVehicle(b, dmg, -nx, -nz);
               if (a === this.currentVehicle || b === this.currentVehicle) {
@@ -3453,7 +3896,7 @@ export class GameEngine {
         npc.rig.group.rotation.x = Math.PI / 2;
         this.sound.playCrash(0.4);
         this.addWanted(npc.isCop ? 2 : 1);
-        this.account.cash += 50;
+        this.account.cash += 12;
         continue;
       }
 
@@ -3527,17 +3970,28 @@ export class GameEngine {
       if (!isStanding) {
         const nextX = THREE.MathUtils.clamp(npc.x + Math.sin(npc.yaw) * npc.speed * moveMult * dt, -980, 820);
         const nextZ = THREE.MathUtils.clamp(npc.z + Math.cos(npc.yaw) * npc.speed * moveMult * dt, -980, 980);
-        const worldRes = this.resolveWorldCollision(nextX, nextZ, 0.26, npc.y);
-        const vehRes = this.resolveActorVsVehicles(worldRes.x, worldRes.z, 0.26, npc.y);
-        const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.26, npc.y);
-        if (worldRes.hit || vehRes.hit) npc.yaw += Math.PI * 0.65;
-        npc.x = finalRes.x;
-        npc.z = finalRes.z;
-      } else {
+        if (distToPlayer > 140) {
+          npc.x = nextX;
+          npc.z = nextZ;
+        } else {
+          const worldRes = this.resolveWorldCollision(nextX, nextZ, 0.26, npc.y);
+          const vehRes = this.resolveActorVsVehicles(worldRes.x, worldRes.z, 0.26, npc.y);
+          const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.26, npc.y);
+          if (worldRes.hit || vehRes.hit) npc.yaw += Math.PI * 0.65;
+          npc.x = finalRes.x;
+          npc.z = finalRes.z;
+        }
+      } else if (distToPlayer <= 140) {
         const vehRes = this.resolveActorVsVehicles(npc.x, npc.z, 0.26, npc.y);
         const finalRes = this.resolveWorldCollision(vehRes.x, vehRes.z, 0.26, npc.y);
         npc.x = finalRes.x;
         npc.z = finalRes.z;
+      }
+
+      if (distToPlayer > 140) {
+        npc.rig.group.position.set(npc.x, npc.y, npc.z);
+        npc.rig.group.rotation.y = npc.yaw;
+        continue;
       }
 
       // NPC vs NPC solid separation
@@ -3644,6 +4098,58 @@ export class GameEngine {
         return;
       }
 
+      // GSL Courier Strict Delivery Rules (road-only, 0% vehicle damage, <= 5% package damage)
+      const isGslMission = Boolean(this.activeStoryDef?.isGslCourier || this.mission.activeId === 'm21');
+      if (this.gslState.active && isGslMission) {
+        const van = this.vehicles.find((vh) => vh.id === this.gslState.vanId);
+        if (!van || van.wrecked || van.health < 100) {
+          this.failGslMission('Dodávka GSL utrpela poškodenie! Auto musí mať 0% poškodenia.');
+          return;
+        }
+        const proj = projectPointOntoRoad(this.world.network, van.x, van.z);
+        const edge = this.world.network.edges[proj.edgeId];
+        const distFromRoad = Math.sqrt(proj.distSq);
+        const maxRoadDist = (edge ? edge.width * 0.5 : 7) + 2.4;
+        this.gslState.onRoad = distFromRoad <= maxRoadDist;
+
+        if (this.gslState.graceTimer > 0) {
+          this.gslState.graceTimer -= dt;
+        } else if (!this.gslState.onRoad) {
+          this.failGslMission('Zišiel si z cesty! Zásielka GSL sa smie viezť výhradne po ceste.');
+          return;
+        }
+
+        if (this.currentVehicle && this.currentVehicle.id === van.id) {
+          const speedMag = Math.hypot(van.vx, van.vz);
+          const accelRate = dt > 0 ? Math.abs(speedMag - this.prevVehSpeed) / dt : 0;
+          let dYaw = van.yaw - this.prevVehYaw;
+          while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+          while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+          const latG = dt > 0 ? (Math.abs(dYaw) / dt) * speedMag : 0;
+
+          const ctxNow = this.getActiveControlContext();
+          const pad = navigator.getGamepads ? Array.from(navigator.getGamepads()).find((p) => p && p.connected) ?? null : null;
+          const handbraking = this.isActionHeld(ctxNow, 'handbrake', pad) > 0.35 && speedMag > 8;
+
+          let pkgDmgRate = 0;
+          if (handbraking) pkgDmgRate += 0.32;
+          if (latG > 13.5) pkgDmgRate += (latG - 13.5) * 0.045;
+          if (accelRate > 17.5) pkgDmgRate += (accelRate - 17.5) * 0.035;
+          if (van.vy < -5.5) pkgDmgRate += Math.abs(van.vy) * 0.08;
+
+          if (pkgDmgRate > 0) {
+            this.gslState.packageDamage = Math.min(6.0, this.gslState.packageDamage + pkgDmgRate * dt);
+          }
+          this.prevVehSpeed = speedMag;
+          this.prevVehYaw = van.yaw;
+
+          if (this.gslState.packageDamage > 5.0) {
+            this.failGslMission('Balík GSL prekročil 5% poškodenia kvôli prudkým manévrom!');
+            return;
+          }
+        }
+      }
+
       const stage = this.activeStoryDef.stages[this.mission.stageIndex];
       if (!stage) return;
 
@@ -3660,7 +4166,16 @@ export class GameEngine {
       if (stage.kind === 'evade_wanted') {
         stageDone = distXZ < stage.radius && this.wantedStars === 0;
       } else if (stage.kind === 'deliver_car') {
-        stageDone = distXZ < stage.radius && Boolean(this.currentVehicle);
+        if (this.gslState.active && isGslMission) {
+          stageDone =
+            distXZ < stage.radius &&
+            Boolean(this.currentVehicle && this.currentVehicle.id === this.gslState.vanId) &&
+            (this.currentVehicle?.health ?? 0) >= 100 &&
+            this.gslState.packageDamage <= 5.0 &&
+            this.gslState.onRoad;
+        } else {
+          stageDone = distXZ < stage.radius && Boolean(this.currentVehicle);
+        }
       } else if (stage.kind === 'fly_ring') {
         stageDone = distXZ < stage.radius && distY < 32 && vehMatch;
       } else {
@@ -3769,14 +4284,23 @@ export class GameEngine {
     let lastNx = 0;
     let lastNz = 1;
 
+    this.world.queryNearbyColliders(rx, rz, _nearbyColliders);
+    this.world.queryNearbyCircleColliders(rx, rz, _nearbyCircles);
+
+    if (_nearbyColliders.length === 0 && _nearbyCircles.length === 0) {
+      return { x: rx, z: rz, hit: false, nx: 0, nz: 1 };
+    }
+
     for (let pass = 0; pass < 4; pass++) {
-      // 1. Oriented Bounding Boxes (Buildings, walls, shelves, bridges, pillars, props)
-      for (let i = 0; i < this.world.colliders.length; i++) {
-        const b = this.world.colliders[i];
+      let passHit = false;
+
+      // 1. Nearby Oriented Bounding Boxes via 48m Spatial Hash Grid
+      for (let i = 0; i < _nearbyColliders.length; i++) {
+        const b = _nearbyColliders[i];
         if (actorY >= b.maxY - 0.5 || actorY + 1.8 <= b.minY) continue;
 
-        const cos = Math.cos(b.yaw);
-        const sin = Math.sin(b.yaw);
+        const cos = b.cos ?? Math.cos(b.yaw);
+        const sin = b.sin ?? Math.sin(b.yaw);
         const dx = rx - b.cx;
         const dz = rz - b.cz;
         const lx = dx * cos - dz * sin;
@@ -3790,6 +4314,7 @@ export class GameEngine {
 
         if (distSq < radius * radius) {
           hit = true;
+          passHit = true;
           let pushedLx = lx;
           let pushedLz = lz;
           let nLx = 0;
@@ -3821,9 +4346,9 @@ export class GameEngine {
         }
       }
 
-      // 2. Circle Colliders (Fountain, monument, trees, streetlights, turntables, chairs, mannequins)
-      for (let i = 0; i < this.world.circleColliders.length; i++) {
-        const c = this.world.circleColliders[i];
+      // 2. Nearby Circle Colliders via 48m Spatial Hash Grid
+      for (let i = 0; i < _nearbyCircles.length; i++) {
+        const c = _nearbyCircles[i];
         if (actorY >= c.maxY - 0.5 || actorY + 1.8 <= c.minY) continue;
         const dx = rx - c.cx;
         const dz = rz - c.cz;
@@ -3831,6 +4356,7 @@ export class GameEngine {
         const distSq = dx * dx + dz * dz;
         if (distSq < minR * minR) {
           hit = true;
+          passHit = true;
           const dist = Math.sqrt(distSq);
           const nx = dist > 0.0001 ? dx / dist : 1;
           const nz = dist > 0.0001 ? dz / dist : 0;
@@ -3840,6 +4366,8 @@ export class GameEngine {
           lastNz = nz;
         }
       }
+
+      if (!passHit) break;
     }
     return { x: rx, z: rz, hit, nx: lastNx, nz: lastNz };
   }
@@ -4064,16 +4592,23 @@ export class GameEngine {
           this.playerZ - Math.cos(this.camYaw) * 20,
         );
         this.camera.lookAt(_camLook);
+        const fpFov = this.isAiming ? 46 : 60;
+        if (Math.abs(this.camera.fov - fpFov) > 0.05) {
+          this.camera.fov = THREE.MathUtils.damp(this.camera.fov, fpFov, 11, dt);
+          this.camera.updateProjectionMatrix();
+        }
       }
       this.sunLight.target.position.set(this.camera.position.x, 0, this.camera.position.z);
       this.sunLight.target.updateMatrixWorld();
       return;
     }
 
-    // Third Person Camera: smoothly follows behind vehicle & turning character!
+    // Third Person Camera: over-the-shoulder ADS when aiming on foot, smooth follow otherwise!
+    const adsOnFoot = !inCar && this.isAiming;
     const targetX = inCar ? this.currentVehicle!.x : this.playerX;
-    const rawTargetY = (inCar ? this.currentVehicle!.y : this.playerY) + (inCar ? 1.8 : 1.75);
-    this.smoothCamY = THREE.MathUtils.damp(this.smoothCamY, rawTargetY, 16, dt);
+    const rawTargetY =
+      (inCar ? this.currentVehicle!.y : this.playerY) + (inCar ? 1.8 : adsOnFoot ? 1.6 : 1.75);
+    this.smoothCamY = THREE.MathUtils.damp(this.smoothCamY, rawTargetY, adsOnFoot ? 20 : 16, dt);
     const targetY = this.smoothCamY;
     const targetZ = inCar ? this.currentVehicle!.z : this.playerZ;
 
@@ -4086,31 +4621,41 @@ export class GameEngine {
     }
 
     const spec = inCar ? VEHICLE_SPECS[this.currentVehicle!.type] : null;
-    const dist = inCar ? (spec?.kind === 'plane' || spec?.kind === 'helicopter' ? 14.5 : 9.6) : 5.2;
+    const dist = inCar
+      ? spec?.kind === 'plane' || spec?.kind === 'helicopter'
+        ? 14.5
+        : 9.6
+      : adsOnFoot
+        ? 2.65
+        : 5.2;
     const horiz = Math.cos(this.camPitch) * dist;
-    const vert = Math.sin(this.camPitch) * dist + 1.25;
+    const vert = Math.sin(this.camPitch) * dist + (adsOnFoot ? 0.16 : 1.25);
+
+    const shoulderRight = adsOnFoot ? 0.68 : 0;
+    const rightX = Math.cos(this.camYaw) * shoulderRight;
+    const rightZ = -Math.sin(this.camYaw) * shoulderRight;
 
     _camDesired.set(
-      targetX + Math.sin(this.camYaw) * horiz,
-      Math.max(1.2, targetY + vert),
-      targetZ + Math.cos(this.camYaw) * horiz,
+      targetX + Math.sin(this.camYaw) * horiz + rightX,
+      Math.max(1.15, targetY + vert),
+      targetZ + Math.cos(this.camYaw) * horiz + rightZ,
     );
 
-    const dampK = inCar ? 18 : 16;
+    const dampK = inCar ? 18 : adsOnFoot ? 22 : 16;
     this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, _camDesired.x, dampK, dt);
     this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, _camDesired.y, dampK, dt);
     this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, _camDesired.z, dampK, dt);
 
-    _camLook.set(targetX, targetY, targetZ);
+    _camLook.set(targetX + rightX, targetY, targetZ + rightZ);
     this.camera.lookAt(_camLook);
 
     this.sunLight.target.position.set(targetX, 0, targetZ);
     this.sunLight.target.updateMatrixWorld();
 
     const speedMag = inCar ? Math.hypot(this.currentVehicle!.vx, this.currentVehicle!.vz) : 0;
-    const targetFov = inCar ? 62 + Math.min(18, speedMag * 0.25) : 60;
+    const targetFov = inCar ? 62 + Math.min(18, speedMag * 0.25) : adsOnFoot ? 44 : 60;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 7, dt);
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, adsOnFoot ? 11 : 7, dt);
       this.camera.updateProjectionMatrix();
     }
   }
@@ -4154,16 +4699,14 @@ export class GameEngine {
     const windowEmissive = 0.02 + Math.max(nightFactor, this.stormFactor * 0.65) * 0.72;
 
     if (this.stormFactor > 0.1 || this.fogFactor > 0.1 || this.cloudFactor > 0.35) {
-      const stormTint = new THREE.Color(0x3b485b);
-      const fogTint = new THREE.Color(0x94a3b8);
-      _skyColor.lerp(stormTint, this.cloudFactor * 0.45 + this.stormFactor * 0.35);
-      _skyColor.lerp(fogTint, this.fogFactor * 0.55);
+      _skyColor.lerp(_stormTint, this.cloudFactor * 0.45 + this.stormFactor * 0.35);
+      _skyColor.lerp(_fogTint, this.fogFactor * 0.55);
     }
     if (this.lightningFlash > 0.05) {
-      _skyColor.lerp(new THREE.Color(0xdbeafe), this.lightningFlash * 0.65);
+      _skyColor.lerp(_lightningTint, this.lightningFlash * 0.65);
     }
 
-    this.scene.background = _skyColor.clone();
+    (this.scene.background as THREE.Color).copy(_skyColor);
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.copy(_skyColor);
       this.scene.fog.near = Math.max(18, 680 - nightFactor * 180 - this.fogFactor * 540 - this.rainFactor * 160);
@@ -4185,9 +4728,26 @@ export class GameEngine {
     (skyUniforms.uSunColor.value as THREE.Color).copy(this.sunLight.color);
     skyUniforms.uNightFactor.value = nightFactor;
 
-    this.world.buildingEmissiveMats.forEach((m) => (m.emissiveIntensity = windowEmissive));
-    this.world.streetLightBulbs.forEach((m) => (m.emissiveIntensity = 0.12 + Math.max(nightFactor, this.stormFactor * 0.8) * 1.25));
-    this.vehicles.forEach((v) => (v.rig.headlightMat.emissiveIntensity = 0.2 + Math.max(nightFactor, this.rainFactor * 0.85, this.fogFactor * 0.9) * 1.05));
+    if (Math.abs(windowEmissive - this.atmoLastWindowEmissive) > 0.008) {
+      this.atmoLastWindowEmissive = windowEmissive;
+      for (let i = 0; i < this.world.buildingEmissiveMats.length; i++) {
+        this.world.buildingEmissiveMats[i].emissiveIntensity = windowEmissive;
+      }
+    }
+    const bulbEmissive = 0.12 + Math.max(nightFactor, this.stormFactor * 0.8) * 1.25;
+    if (Math.abs(bulbEmissive - this.atmoLastBulbEmissive) > 0.008) {
+      this.atmoLastBulbEmissive = bulbEmissive;
+      for (let i = 0; i < this.world.streetLightBulbs.length; i++) {
+        this.world.streetLightBulbs[i].emissiveIntensity = bulbEmissive;
+      }
+    }
+    const headEmissive = 0.2 + Math.max(nightFactor, this.rainFactor * 0.85, this.fogFactor * 0.9) * 1.05;
+    if (Math.abs(headEmissive - this.atmoLastHeadlightEmissive) > 0.008) {
+      this.atmoLastHeadlightEmissive = headEmissive;
+      for (let i = 0; i < this.vehicles.length; i++) {
+        this.vehicles[i].rig.headlightMat.emissiveIntensity = headEmissive;
+      }
+    }
   }
 
   // --- Gemini AI Director, Live NPC Chat & Dynamic Mission Generation ---
@@ -4539,6 +5099,28 @@ export class GameEngine {
 
     const talkNpc = this.findClosestInteractableNpc();
 
+    const gslVan = this.gslState.active
+      ? this.vehicles.find((v) => v.id === this.gslState.vanId)
+      : null;
+    const gslMission: GslMissionTelemetry | null = this.gslState.active
+      ? {
+          active: true,
+          carDamagePct: Math.max(0, Math.round(100 - (gslVan?.health ?? 100))),
+          packageDamagePct: Number(this.gslState.packageDamage.toFixed(2)),
+          maxPackageDamagePct: 5.0,
+          onRoad: this.gslState.onRoad,
+        }
+      : null;
+
+    const aimTargetType =
+      !this.currentVehicle && !this.wasted && this.weaponId !== 'fists'
+        ? this.computeCrosshairAimTarget(WEAPONS[this.weaponId].range).targetType
+        : 'none';
+
+    if (!this.cachedControlsSnapshot) {
+      this.cachedControlsSnapshot = JSON.parse(JSON.stringify(this.controlsConfig)) as ControlsConfig;
+    }
+
     const profile = CHARACTERS[this.characterId];
     this.onHudUpdate({
       characterId: this.characterId,
@@ -4575,6 +5157,11 @@ export class GameEngine {
       cameraMode: this.cameraMode,
       weaponId: this.weaponId,
       weaponName: WEAPONS[this.weaponId].name,
+      aimState: {
+        isAiming: this.isAiming,
+        targetType: aimTargetType,
+        hitMarker: this.hitMarkerTimer > 0,
+      },
       ammo: { ...this.account.ammo },
       unlockedWeapons: { ...this.account.unlockedWeapons },
       radioId: this.radioId,
@@ -4604,6 +5191,7 @@ export class GameEngine {
       toastText: this.toastText,
       toastType: this.toastType,
       mission: { ...this.mission },
+      gslMission,
       completedStoryIds: [...this.completedStoryIds],
       discoveredHiddenIds: [...this.discoveredHiddenIds],
       completedHiddenIds: [...this.completedHiddenIds],
@@ -4622,11 +5210,12 @@ export class GameEngine {
       soundMuted: this.sound.isMuted(),
       gamepadConnected: this.gamepadConnected,
       activeControlContext: this.getActiveControlContext(),
-      controlsConfig: JSON.parse(JSON.stringify(this.controlsConfig)) as ControlsConfig,
+      controlsConfig: this.cachedControlsSnapshot,
       playerHandle: this.playerHandle,
       friends: [...this.friends],
       onlineFriends,
       pendingInvite: this.pendingInvite,
+      ownedVehicles: [...this.account.ownedVehicles],
     });
   }
 
@@ -4648,10 +5237,12 @@ export class GameEngine {
     window.removeEventListener('wheel', this.handleWheel);
     window.removeEventListener('gamepadconnected', this.handleGamepadChange);
     window.removeEventListener('gamepaddisconnected', this.handleGamepadChange);
+    window.removeEventListener('blur', this.handleWindowBlur);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
 
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('mousedown', this.handleCanvasMouseDown);
+    canvas.removeEventListener('contextmenu', this.handleContextMenu);
     canvas.removeEventListener('webglcontextlost', this.handleContextLost);
 
     this.rainGeo?.dispose();
@@ -4659,7 +5250,6 @@ export class GameEngine {
     this.sound.dispose();
     this.textures.dispose();
     this.envRT?.dispose();
-    this.composer?.dispose();
     this.renderer.dispose();
     if (canvas.parentElement === this.container) {
       this.container.removeChild(canvas);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createCharacterFaceTexture, createSkinTattooTexture } from './textures';
 import {
   BeardStyleId,
@@ -10,6 +11,68 @@ import {
   VehicleSpec,
   WeaponId,
 } from './types';
+
+// Shared static vehicle materials & cached merged wheel geometries (massive draw-call & shader reduction)
+const sharedTrimMat = new THREE.MeshStandardMaterial({
+  color: 0x131720,
+  metalness: 0.28,
+  roughness: 0.58,
+  envMapIntensity: 0.32,
+});
+const sharedInteriorMat = new THREE.MeshStandardMaterial({
+  color: 0x1b202b,
+  roughness: 0.88,
+  metalness: 0.05,
+});
+const sharedTireMat = new THREE.MeshStandardMaterial({
+  color: 0x111827,
+  roughness: 0.85,
+  metalness: 0.1,
+});
+const sharedCaliperMat = new THREE.MeshStandardMaterial({
+  color: 0xdc2626,
+  roughness: 0.42,
+  metalness: 0.3,
+});
+const sharedGlassMat = new THREE.MeshPhysicalMaterial({
+  color: 0x0f172a,
+  metalness: 0.16,
+  roughness: 0.24,
+  clearcoat: 0.32,
+  clearcoatRoughness: 0.25,
+  envMapIntensity: 0.42,
+  transparent: true,
+  opacity: 0.78,
+});
+const sharedFlameMat1 = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.88 });
+const sharedFlameMat2 = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.92 });
+
+const cachedWheelGeos = new Map<number, { tireGeo: THREE.BufferGeometry; alloyGeo: THREE.BufferGeometry }>();
+function getCachedWheelGeos(wheelRadius: number) {
+  let cached = cachedWheelGeos.get(wheelRadius);
+  if (cached) return cached;
+
+  const tireGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.28, 18);
+  tireGeo.rotateZ(Math.PI / 2);
+
+  const parts: THREE.BufferGeometry[] = [];
+  const rimGeo = new THREE.CylinderGeometry(wheelRadius * 0.66, wheelRadius * 0.66, 0.295, 16);
+  rimGeo.rotateZ(Math.PI / 2);
+  parts.push(rimGeo.toNonIndexed());
+  const hubCapGeo = new THREE.CylinderGeometry(wheelRadius * 0.2, wheelRadius * 0.2, 0.31, 10);
+  hubCapGeo.rotateZ(Math.PI / 2);
+  parts.push(hubCapGeo.toNonIndexed());
+  for (let sp = 0; sp < 5; sp++) {
+    const spoke = new THREE.BoxGeometry(0.305, wheelRadius * 1.18, 0.06);
+    spoke.rotateX((sp * Math.PI) / 5);
+    parts.push(spoke.toNonIndexed());
+  }
+  const alloyGeo = mergeGeometries(parts, false) ?? rimGeo;
+  parts.forEach((p) => p.dispose());
+  cached = { tireGeo, alloyGeo };
+  cachedWheelGeos.set(wheelRadius, cached);
+  return cached;
+}
 
 export interface VehicleRig {
   group: THREE.Group;
@@ -93,8 +156,8 @@ function makeDeformableRoundedBox(
     bevelEnabled: true,
     bevelThickness: r,
     bevelSize: r * 0.85,
-    bevelSegments: 3,
-    curveSegments: 6,
+    bevelSegments: 2,
+    curveSegments: 4,
   });
   geo.center();
   geo.computeVertexNormals();
@@ -136,8 +199,8 @@ function makeSmoothProfileBody(
     bevelEnabled: true,
     bevelThickness,
     bevelSize,
-    bevelSegments: 4,
-    curveSegments: 10,
+    bevelSegments: 2,
+    curveSegments: 6,
   });
   geo.translate(0, 0, -innerW * 0.5);
   geo.rotateY(-Math.PI / 2);
@@ -207,7 +270,7 @@ export function createVehicleMesh(
   spec: VehicleSpec,
   contactShadowTex: THREE.Texture,
   customColor?: number,
-  extraTex?: { taxiSign?: THREE.Texture; emsCross?: THREE.Texture },
+  extraTex?: { taxiSign?: THREE.Texture; emsCross?: THREE.Texture; gslLogo?: THREE.Texture },
 ): VehicleRig {
   const group = new THREE.Group();
   const bodyGroup = new THREE.Group();
@@ -224,18 +287,8 @@ export function createVehicleMesh(
     envMapIntensity: 0.44,
   });
 
-  const trimMat = new THREE.MeshStandardMaterial({
-    color: 0x131720,
-    metalness: 0.28,
-    roughness: 0.58,
-    envMapIntensity: 0.32,
-  });
-
-  const interiorMat = new THREE.MeshStandardMaterial({
-    color: 0x1b202b,
-    roughness: 0.88,
-    metalness: 0.05,
-  });
+  const trimMat = sharedTrimMat;
+  const interiorMat = sharedInteriorMat;
 
   const rimMat = new THREE.MeshStandardMaterial({
     color: 0xd1d5db,
@@ -244,22 +297,8 @@ export function createVehicleMesh(
     envMapIntensity: 0.52,
   });
 
-  const caliperMat = new THREE.MeshStandardMaterial({
-    color: 0xdc2626,
-    roughness: 0.42,
-    metalness: 0.3,
-  });
-
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0x0f172a,
-    metalness: 0.16,
-    roughness: 0.24,
-    clearcoat: 0.32,
-    clearcoatRoughness: 0.25,
-    envMapIntensity: 0.42,
-    transparent: true,
-    opacity: 0.78,
-  });
+  const caliperMat = sharedCaliperMat;
+  const glassMat = sharedGlassMat;
 
   const headlightMat = new THREE.MeshStandardMaterial({
     color: 0xfefce8,
@@ -281,7 +320,7 @@ export function createVehicleMesh(
     opacity: 0.88,
   });
   const neonStrip = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.03, spec.length * 0.65, 4, 8),
+    new THREE.CapsuleGeometry(0.03, spec.length * 0.65, 3, 6),
     neonMat,
   );
   neonStrip.rotation.x = Math.PI / 2;
@@ -300,14 +339,12 @@ export function createVehicleMesh(
   let waterTurret: THREE.Group | undefined;
 
   const fireGroup = new THREE.Group();
-  const flameMat1 = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.88 });
-  const flameMat2 = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.92 });
-  for (let f = 0; f < 5; f++) {
+  for (let f = 0; f < 3; f++) {
     const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(0.45 + (f % 2) * 0.15, 1.3 + (f % 3) * 0.35, 10),
-      f % 2 === 0 ? flameMat1 : flameMat2,
+      new THREE.ConeGeometry(0.5 + (f % 2) * 0.15, 1.35 + f * 0.25, 8),
+      f % 2 === 0 ? sharedFlameMat1 : sharedFlameMat2,
     );
-    cone.position.set((f - 2) * 0.38, spec.height * 0.72 + 0.5, spec.length * 0.22);
+    cone.position.set((f - 1) * 0.45, spec.height * 0.72 + 0.5, spec.length * 0.22);
     fireGroup.add(cone);
   }
   fireGroup.visible = false;
@@ -714,6 +751,68 @@ export function createVehicleMesh(
           bodyGroup.add(sign);
         });
       }
+    } else if (spec.id === 'gsl_van') {
+      // Sculpted GSL Express Delivery Box Van (Aerodynamic Cab + Tall Cargo Box + GSL Logos!)
+      const lowerH = h * 0.38;
+      const lowerMesh = makeDeformableRoundedBox(w, lowerH, l, 0.1, paintMat);
+      lowerMesh.position.y = chassisBottom + lowerH * 0.5;
+      bodyGroup.add(lowerMesh);
+      deformableMeshes.push(lowerMesh);
+
+      const cargoBox = makeDeformableRoundedBox(w * 0.99, h * 0.62, l * 0.68, 0.1, paintMat);
+      cargoBox.position.set(0, chassisBottom + lowerH + h * 0.27, -l * 0.15);
+      bodyGroup.add(cargoBox);
+      deformableMeshes.push(cargoBox);
+
+      const cabProfile = makeSmoothProfileBody(
+        [
+          [l * 0.16, chassisBottom + lowerH * 0.85],
+          [l * 0.49, chassisBottom + lowerH * 0.85],
+          [l * 0.48, chassisBottom + lowerH + h * 0.14],
+          [l * 0.35, chassisBottom + lowerH + h * 0.5],
+          [l * 0.17, chassisBottom + lowerH + h * 0.54],
+        ],
+        w * 0.94,
+        paintMat,
+        0.08,
+        0.1,
+        true,
+      );
+      bodyGroup.add(cabProfile);
+      deformableMeshes.push(cabProfile);
+
+      const windshield = new THREE.Mesh(new THREE.BoxGeometry(w * 0.82, h * 0.34, 0.12), glassMat);
+      windshield.position.set(0, chassisBottom + lowerH + h * 0.27, l * 0.41);
+      windshield.rotation.x = -0.38;
+      bodyGroup.add(windshield);
+
+      const orangeStripeMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.42 });
+      const navyStripeMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.5 });
+      const stripeOrange = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, 0.18, l * 0.96), orangeStripeMat);
+      stripeOrange.position.set(0, chassisBottom + lowerH * 0.72, 0);
+      const stripeNavy = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, 0.1, l * 0.96), navyStripeMat);
+      stripeNavy.position.set(0, chassisBottom + lowerH * 0.56, 0);
+      bodyGroup.add(stripeOrange, stripeNavy);
+
+      // Rear cargo door seam & roll-up handle
+      const rearSeam = new THREE.Mesh(new THREE.BoxGeometry(0.05, h * 0.58, 0.06), trimMat);
+      rearSeam.position.set(0, chassisBottom + lowerH + h * 0.25, -l * 0.495);
+      bodyGroup.add(rearSeam);
+
+      // Side & rear corporate GSL logos
+      if (extraTex?.gslLogo) {
+        const gslMat = new THREE.MeshBasicMaterial({ map: extraTex.gslLogo });
+        [-w * 0.506, w * 0.506].forEach((cx, idx) => {
+          const logoPlane = new THREE.Mesh(new THREE.PlaneGeometry(2.65, 1.32), gslMat);
+          logoPlane.position.set(cx, chassisBottom + lowerH + h * 0.3, -l * 0.15);
+          logoPlane.rotation.y = idx === 0 ? -Math.PI / 2 : Math.PI / 2;
+          bodyGroup.add(logoPlane);
+        });
+        const rearLogo = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 0.88), gslMat);
+        rearLogo.position.set(0, chassisBottom + lowerH + h * 0.32, -l * 0.5 - 0.02);
+        rearLogo.rotation.y = Math.PI;
+        bodyGroup.add(rearLogo);
+      }
     } else {
       // Sleek Smooth-Curved Automotive Chassis + Curved Greenhouse + Wheel Arch Flares!
       const isSuv = spec.id === 'terramax';
@@ -936,21 +1035,14 @@ export function createVehicleMesh(
       bodyGroup.add(redPod, bluePod);
     }
 
-    // High-Segment Rounded Wheels with 5-Spoke Alloy Rims & Brake Calipers
+    // Rounded Wheels with Cached 5-Spoke Alloy Rim Geometry (2 meshes/wheel instead of 9!)
     const wheelPositions: Array<[number, number, boolean]> = [
       [-w * 0.48, l * 0.31, true],
       [w * 0.48, l * 0.31, true],
       [-w * 0.48, -l * 0.31, false],
       [w * 0.48, -l * 0.31, false],
     ];
-    const tireGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.28, 28);
-    tireGeo.rotateZ(Math.PI / 2);
-    const rimGeo = new THREE.CylinderGeometry(wheelRadius * 0.66, wheelRadius * 0.66, 0.295, 22);
-    rimGeo.rotateZ(Math.PI / 2);
-    const hubCapGeo = new THREE.CylinderGeometry(wheelRadius * 0.2, wheelRadius * 0.2, 0.31, 14);
-    hubCapGeo.rotateZ(Math.PI / 2);
-    const spokeGeo = new THREE.BoxGeometry(0.305, wheelRadius * 1.18, 0.06);
-    const tireMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.85, metalness: 0.1 });
+    const { tireGeo, alloyGeo } = getCachedWheelGeos(wheelRadius);
 
     wheelPositions.forEach(([wx, wz, isFront]) => {
       const pivot = new THREE.Group();
@@ -958,19 +1050,10 @@ export function createVehicleMesh(
       group.add(pivot);
 
       const wheelGroup = new THREE.Group();
-      const tire = new THREE.Mesh(tireGeo, tireMat);
+      const tire = new THREE.Mesh(tireGeo, sharedTireMat);
       tire.castShadow = true;
-      const rim = new THREE.Mesh(rimGeo, rimMat);
-      const hubCap = new THREE.Mesh(hubCapGeo, trimMat);
-      wheelGroup.add(tire, rim, hubCap);
-      for (let sp = 0; sp < 5; sp++) {
-        const spoke = new THREE.Mesh(spokeGeo, trimMat);
-        spoke.rotation.x = (sp * Math.PI) / 5;
-        wheelGroup.add(spoke);
-      }
-      const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.15, 0.11), caliperMat);
-      caliper.position.set(0, 0.06, -0.06);
-      wheelGroup.add(caliper);
+      const rim = new THREE.Mesh(alloyGeo, rimMat);
+      wheelGroup.add(tire, rim);
       pivot.add(wheelGroup);
 
       wheelMeshes.push(wheelGroup);
@@ -1427,17 +1510,32 @@ export function setCharacterWeaponPose(
   isMoving: boolean,
   walkCycle: number,
   recoil = 0,
+  aimPitch = 0,
+  isAiming = false,
 ) {
+  const pitch = THREE.MathUtils.clamp(aimPitch, -0.75, 0.75);
   if (weapon === 'pistol') {
-    rig.rightArm.rotation.set(-1.38 - recoil * 0.28, -0.08, 0);
-    rig.rightElbow.rotation.set(-0.18 + recoil * 0.14, 0, 0);
-    rig.leftArm.rotation.set(-1.12 - recoil * 0.15, 0.42, 0.12);
-    rig.leftElbow.rotation.set(-0.48, 0, -0.25);
+    const aimLift = isAiming ? -1.52 : -1.38;
+    const elbowBend = isAiming ? -0.06 : -0.18;
+    rig.rightArm.rotation.set(aimLift + pitch - recoil * 0.24, isAiming ? -0.04 : -0.08, 0);
+    rig.rightElbow.rotation.set(elbowBend + recoil * 0.14, 0, 0);
+    rig.leftArm.rotation.set(
+      (isAiming ? -1.32 : -1.12) + pitch * 0.85 - recoil * 0.14,
+      isAiming ? 0.48 : 0.42,
+      0.12,
+    );
+    rig.leftElbow.rotation.set(isAiming ? -0.34 : -0.48, 0, -0.25);
   } else if (weapon === 'smg') {
-    rig.rightArm.rotation.set(-0.98 - recoil * 0.22, 0.22, -0.05);
-    rig.rightElbow.rotation.set(-0.56 + recoil * 0.12, 0, 0.12);
-    rig.leftArm.rotation.set(-1.05 - recoil * 0.12, 0.56, 0.18);
-    rig.leftElbow.rotation.set(-0.52, -0.15, -0.22);
+    const aimLift = isAiming ? -1.32 : -0.98;
+    const elbowBend = isAiming ? -0.24 : -0.56;
+    rig.rightArm.rotation.set(aimLift + pitch - recoil * 0.18, isAiming ? 0.12 : 0.22, -0.05);
+    rig.rightElbow.rotation.set(elbowBend + recoil * 0.12, 0, 0.12);
+    rig.leftArm.rotation.set(
+      (isAiming ? -1.24 : -1.05) + pitch * 0.85 - recoil * 0.1,
+      isAiming ? 0.48 : 0.56,
+      0.18,
+    );
+    rig.leftElbow.rotation.set(isAiming ? -0.38 : -0.52, -0.15, -0.22);
   } else {
     const swing = isMoving ? Math.sin(walkCycle) * 0.6 : 0;
     rig.leftArm.rotation.set(-swing * 0.7, 0, 0);
